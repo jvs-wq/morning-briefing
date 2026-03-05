@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.eggs/
+
+# Environment & credentials
+.env
+*.json
+!package.json
+credentials/
+token.pickle
+gmail_token.json
+
+# Backups
+*.bak.*
+*.backup
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
