@@ -17,6 +17,8 @@ Exit codes:
     2 = logs missing (workflow may not have run)
 """
 
+from __future__ import annotations
+
 import os
 import sys
 import subprocess

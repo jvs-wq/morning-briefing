@@ -14,6 +14,8 @@ Configuration:
     Set environment variables or edit the CONFIG section below.
 """
 
+from __future__ import annotations
+
 import os
 import time
 import fcntl
@@ -23,6 +25,14 @@ import subprocess
 import base64
 import re
 import feedparser
+
+# v2 redesign: AI-generated editorial brief with HTML email
+from morning_briefing_redesign import (
+    generate_ai_morning_brief,
+    format_morning_html,
+    format_morning_text,
+    send_html_email,
+)
 
 # Load .env file if present (no external dependency needed)
 def _load_dotenv(path=None):
@@ -83,20 +93,28 @@ CONFIG = {
     "IMESSAGE_RECIPIENT": os.getenv("IMESSAGE_RECIPIENT", ""),
     "EMAIL_RECIPIENT": os.getenv("EMAIL_RECIPIENT", ""),
 
-    # Holdings
+    # Holdings — combined personal (JVS) ∪ BCM portfolios
+    # Updated 2026-03-16 from SummPosn_Grp_JVS_Portfolio_031626.csv + BCM top holdings 030926.xlsx
+    # Personal: 58 stocks + 10 ETFs | BCM-only additions: 15 stocks + 2 ETFs | Combined: 73 stocks + 12 ETFs = 85 total
     "INDIVIDUAL_STOCKS": [
-        "AAPL", "ABCL", "ABNB", "AFRM", "AMAT", "AMD", "AMZN", "ASML", "BAC", "BKR",
-        "BMNR", "BRKB", "C", "CL", "CMCSA", "CNH", "COF", "COST", "CTRA", "CVS",
-        "DE", "DIS", "ELV", "EQT", "FCX", "FDX", "FISV", "FSLR", "GDX", "GDXJ",
-        "GILD", "GLXY", "GOOG", "GOOGL", "GS", "HIMS", "IFF", "ISRG", "JNJ", "JPM",
-        "META", "MSGS", "MSFT", "MTN", "MU", "NBIS", "NFG", "NTR", "NU", "NVDA",
-        "ODD", "OUST", "PEYUF", "PFE", "PLTR", "RIG", "RIO", "SCHW", "SLB", "SNY",
-        "SOFI", "TDW", "TROW", "TSLA", "UBER", "UNP", "VGZ", "VWAPY", "VZ", "WFC",
-        "WY", "ZBH", "ZETA"
+        # --- Both personal & BCM ---
+        "AAPL", "ABNB", "AMAT", "AMZN", "BAC", "C", "CMCSA", "COF", "DE", "ELV",
+        "EQT", "FDX", "FISV", "FSLR", "GOOG", "META", "MSGS", "MSFT", "MTN", "MU",
+        "NVDA", "SCHW", "UBER", "VSNT", "WFC",
+        # --- Personal only ---
+        "ABCL", "ADDYY", "AFRM", "AMD", "ARCC", "ASML", "AVAV", "BMNR", "BRKB",
+        "CNH", "FCX", "GILD", "GLXY", "HIMS", "ISRG", "NBIS", "NFG", "NTR", "NU",
+        "ODD", "OUST", "PEYUF", "PLTR", "RIG", "RIO", "SNY", "SOFI", "TDW", "TSLA",
+        "VGZ", "VWAPY", "WY", "ZETA",
+        # --- BCM only (not in personal, but top holdings) ---
+        "BKR", "CHWY", "COST", "CTRA", "CVS", "DIS", "GOOGL", "GS", "INVH", "JNJ",
+        "JPM", "PFE", "SLB", "TROW", "UNP",
     ],
     "ETFS": [
-        "DFAS", "DFEM", "DFEV", "DVYE", "EWZ", "GDX", "GDXJ", "IBB", "URNM", "VDE",
-        "VGHAX", "XLE"
+        # --- Personal ETFs ---
+        "CSRE", "DFAS", "DFCF", "DFEM", "DFEV", "DVYE", "GDX", "GDXJ", "URNM", "VCRB",
+        # --- BCM ETFs ---
+        "VDE", "XLE",
     ],
 
     # Social buzz threshold (% week-over-week engagement increase to flag)
@@ -118,23 +136,22 @@ CONFIG = {
 # - Cascading lookups: only query secondary sources for tickers missing from primary
 # - Yahoo endpoints don't support batching, so we minimize by checking only gaps
 #
-# Current API call count (approx):
+# Current API call count (approx) — ordered to space out rate-limited APIs:
 #   1 call  - Market snapshot (S&P futures)
-#   1 call  - Market snapshot (NASDAQ futures)  
+#   1 call  - Market snapshot (NASDAQ futures)
 #   1 call  - Market snapshot (10Y Treasury)
 #   1 call  - Yahoo news RSS (all tickers)
 #   1 call  - Finnhub upcoming earnings
-#   N calls - Yahoo upcoming earnings (only for ~80 missing tickers)
-#   1 call  - Finnhub scorecard
-#   1 call  - FMP scorecard
-#   N calls - FMP direct lookup (only missing tickers)
-#   N calls - Yahoo earnings history (only still-missing tickers)
-#   N calls - Alpha Vantage earnings (only still-missing, max 20 due to daily limit)
-#   2 calls - FMP batch quotes (pre-market movers, 50 tickers each)
-#   10 calls - LunarCrush (priority tickers only)
-#   15 calls - Alpha Vantage RSI (priority tickers only, flags oversold/52w low)
-#   2 calls - Gmail API (list + get message for Vital Knowledge)
+#   N calls - yfinance upcoming earnings (only for ~83 missing tickers)
+#   15 calls - Alpha Vantage RSI (priority tickers, 3s spacing)    ← rate-limited
+#   1 call  - Finnhub scorecard                                     ← cooldown gap
+#   N calls - yfinance earnings history (only still-missing tickers)
+#   N calls - Alpha Vantage earnings (still-missing, max 20, 3s)   ← rate-limited
+#   2 calls - FMP batch quotes (pre-market movers, 50 tickers each) ← cooldown gap
+#   5 calls - LunarCrush topics (priority tickers, 3s spacing)     ← rate-limited
+#   8 calls - LunarCrush creators (watchlist, 4s spacing)          ← rate-limited
 #   1 call  - Anthropic AI filter
+#   2 calls - Gmail API (list + get message for Vital Knowledge)
 #   N calls - Anthropic AI miss explanations (up to 10 misses)
 #
 # MARKET RECAP API calls (1:15 PM):
@@ -157,7 +174,7 @@ def fetch_market_snapshot(finnhub_key: str) -> dict:
     
     try:
         # S&P 500 futures (ES=F on Yahoo)
-        sp_url = "https://query1.finance.yahoo.com/v8/finance/chart/ES=F?interval=1d&range=1d"
+        sp_url = "https://query1.finance.yahoo.com/v8/finance/chart/ES=F?interval=1d&range=1d&includePrePost=true"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(sp_url, headers=headers, timeout=10)
         if resp.status_code == 200:
@@ -173,7 +190,7 @@ def fetch_market_snapshot(finnhub_key: str) -> dict:
     
     try:
         # NASDAQ futures (NQ=F on Yahoo)
-        nq_url = "https://query1.finance.yahoo.com/v8/finance/chart/NQ=F?interval=1d&range=1d"
+        nq_url = "https://query1.finance.yahoo.com/v8/finance/chart/NQ=F?interval=1d&range=1d&includePrePost=true"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(nq_url, headers=headers, timeout=10)
         if resp.status_code == 200:
@@ -189,7 +206,7 @@ def fetch_market_snapshot(finnhub_key: str) -> dict:
     
     try:
         # 10-Year Treasury Yield (^TNX on Yahoo)
-        tnx_url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ETNX?interval=1d&range=1d"
+        tnx_url = "https://query1.finance.yahoo.com/v8/finance/chart/%5ETNX?interval=1d&range=1d&includePrePost=true"
         headers = {"User-Agent": "Mozilla/5.0"}
         resp = requests.get(tnx_url, headers=headers, timeout=10)
         if resp.status_code == 200:
@@ -364,10 +381,10 @@ def fetch_social_buzz(tickers: list, api_key: str = "", threshold: int = 100) ->
     results = []
 
     # Cap at 5 tickers -- LunarCrush rate-limits aggressively (HTTP 429)
-    priority_tickers = ["PLTR", "NVDA", "TSLA", "META", "AMZN", "GOOGL", "AMD", "SOFI", "UBER", "MSFT"]
+    priority_tickers = ["PLTR", "NVDA", "TSLA", "META", "AMZN", "GOOG", "AMD", "SOFI", "UBER", "MSFT"]
     tickers_to_check = [t for t in priority_tickers if t in tickers][:5]
 
-    lc_backoff = 2  # Start with 2s between calls, increase on 429
+    lc_backoff = 3  # Start with 3s between calls, increase on 429
 
     for i, ticker in enumerate(tickers_to_check):
         try:
@@ -391,7 +408,7 @@ def fetch_social_buzz(tickers: list, api_key: str = "", threshold: int = 100) ->
                 continue
             else:
                 # Successful call — reset backoff
-                lc_backoff = max(lc_backoff - 1, 2)
+                lc_backoff = max(lc_backoff - 1, 3)
 
             topic_json = topic_resp.json()
             topic_data = topic_json.get("data", topic_json)
@@ -465,7 +482,7 @@ def fetch_creator_signals(watchlist: list, api_key: str = "", holdings: list = N
             holdings_lower.add(h.lower())
             holdings_lower.add("$" + h.lower())
 
-    cr_backoff = 3  # Start with 3s between calls, increase on 429
+    cr_backoff = 4  # Start with 4s between calls, increase on 429
 
     for i, handle in enumerate(watchlist[:10]):
         try:
@@ -484,7 +501,7 @@ def fetch_creator_signals(watchlist: list, api_key: str = "", holdings: list = N
                 print(f"    Creator {handle}: HTTP {resp.status_code}")
                 continue
             else:
-                cr_backoff = max(cr_backoff - 1, 3)
+                cr_backoff = max(cr_backoff - 1, 4)
 
             data = resp.json().get("data", {})
             name = data.get("creator_display_name", handle)
@@ -740,42 +757,91 @@ def fetch_yfinance_upcoming_earnings(tickers: set[str], existing_symbols: set[st
 
 
 def fetch_premarket_movers(api_key: str, tickers: list[str], threshold: float = 3.0) -> list[dict]:
-    """Fetch pre-market movers using Yahoo Finance spark + FMP stable fallback."""
+    """Fetch pre-market movers using yfinance (pre/post market) → Yahoo spark → FMP fallback."""
     movers = []
     found_symbols = set()
+    detected_market_state = "REGULAR"  # track state for Phase 2 decision
 
-    # Phase 1: Yahoo Finance spark endpoint (batch)
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
-        for i in range(0, len(tickers), 20):
-            batch = tickers[i:i+20]
-            symbols = ",".join(batch)
-            url = f"https://query2.finance.yahoo.com/v8/finance/spark?symbols={symbols}&range=1d&interval=1d"
-            resp = requests.get(url, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json()
-                for symbol, info in data.items():
-                    close_prices = info.get("close", [])
-                    prev_close = info.get("chartPreviousClose")
-                    if close_prices and prev_close and prev_close != 0:
-                        price = close_prices[-1]
-                        if price is None:
-                            continue
-                        change_pct = ((price - prev_close) / prev_close) * 100
-                        found_symbols.add(symbol)
-                        if abs(change_pct) >= threshold:
-                            movers.append({
-                                "symbol": symbol,
-                                "price": price,
-                                "prev_close": prev_close,
-                                "change_pct": change_pct,
-                                "volume": 0
-                            })
-            time.sleep(0.3)
-    except Exception as e:
-        print(f"    Warning: Yahoo spark error for premarket: {e}")
+    # Phase 1: yfinance — provides actual pre-market / post-market prices via
+    # authenticated Yahoo endpoint. During PRE/POST states, Ticker.info returns
+    # preMarketPrice/postMarketPrice which the unauthenticated spark endpoint lacks.
+    if YFINANCE_AVAILABLE:
+        try:
+            import warnings
+            warnings.filterwarnings("ignore", category=FutureWarning)
 
-    # Phase 2: FMP stable single-symbol for missing tickers
+            # Check market state from a liquid ticker
+            probe = yf.Ticker("AAPL").info
+            market_state = probe.get("marketState", "REGULAR")
+            detected_market_state = market_state
+            print(f"    Market state: {market_state}")
+
+            if market_state in ("PRE", "POST", "PREPRE", "POSTPOST"):
+                price_field = "preMarketPrice" if "PRE" in market_state else "postMarketPrice"
+                change_field = "preMarketChangePercent" if "PRE" in market_state else "postMarketChangePercent"
+
+                for symbol in tickers:
+                    try:
+                        info = yf.Ticker(symbol).info
+                        price = info.get(price_field)
+                        prev_close = info.get("regularMarketPreviousClose")
+                        # No fallback: if ticker lacks pre/post price, skip it.
+                        # regularMarketPrice is yesterday's close for OTC/foreign
+                        # tickers and would show yesterday's move, not premarket.
+                        if price and prev_close and prev_close != 0:
+                            change_pct = ((price - prev_close) / prev_close) * 100
+                            found_symbols.add(symbol)
+                            if abs(change_pct) >= threshold:
+                                movers.append({
+                                    "symbol": symbol,
+                                    "price": price,
+                                    "prev_close": prev_close,
+                                    "change_pct": change_pct,
+                                    "volume": 0
+                                })
+                    except Exception:
+                        continue
+
+                if found_symbols:
+                    print(f"    yfinance: got {market_state.lower()} prices for {len(found_symbols)} tickers")
+
+        except Exception as e:
+            print(f"    Warning: yfinance premarket error: {e}")
+
+    # Phase 2: Yahoo Finance spark endpoint (batch) — ONLY during regular hours.
+    # During PRE/POST, spark range=1d returns yesterday's candles, not today's premarket.
+    spark_tickers = [t for t in tickers if t not in found_symbols]
+    if spark_tickers and detected_market_state == "REGULAR":
+        try:
+            headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+            for i in range(0, len(spark_tickers), 20):
+                batch = spark_tickers[i:i+20]
+                symbols = ",".join(batch)
+                url = (f"https://query2.finance.yahoo.com/v8/finance/spark?symbols={symbols}"
+                       f"&range=1d&interval=5m&includePrePost=true")
+                resp = requests.get(url, headers=headers, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for symbol, info in data.items():
+                        close_prices = [c for c in (info.get("close") or []) if c is not None]
+                        prev_close = info.get("chartPreviousClose")
+                        if close_prices and prev_close and prev_close != 0:
+                            price = close_prices[-1]
+                            change_pct = ((price - prev_close) / prev_close) * 100
+                            found_symbols.add(symbol)
+                            if abs(change_pct) >= threshold:
+                                movers.append({
+                                    "symbol": symbol,
+                                    "price": price,
+                                    "prev_close": prev_close,
+                                    "change_pct": change_pct,
+                                    "volume": 0
+                                })
+                time.sleep(0.3)
+        except Exception as e:
+            print(f"    Warning: Yahoo spark error for premarket: {e}")
+
+    # Phase 3: FMP stable single-symbol for missing tickers
     missing = [t for t in tickers if t not in found_symbols]
     if missing and api_key:
         for ticker in missing[:15]:
@@ -825,7 +891,7 @@ def fetch_market_close(finnhub_key: str) -> dict:
     
     for symbol, key in indices:
         try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d&includePrePost=true"
             resp = requests.get(url, headers=headers, timeout=10)
             if resp.status_code == 200:
                 data = resp.json()
@@ -833,7 +899,7 @@ def fetch_market_close(finnhub_key: str) -> dict:
                 meta = result.get("meta", {})
                 price = meta.get("regularMarketPrice")
                 prev_close = meta.get("previousClose") or meta.get("chartPreviousClose")
-                
+
                 close_data[key] = price
                 if price and prev_close and key != "vix" and key != "treasury_10y":
                     close_data[f"{key}_change"] = ((price - prev_close) / prev_close) * 100
@@ -845,42 +911,85 @@ def fetch_market_close(finnhub_key: str) -> dict:
 
 
 def fetch_portfolio_performance(api_key: str, tickers: list[str]) -> list[dict]:
-    """Fetch today's performance for all holdings using Yahoo Finance + yfinance."""
+    """Fetch today's performance for all holdings using yfinance (pre/post) → Yahoo spark."""
     performance = []
+    found_symbols = set()
+    detected_market_state = "REGULAR"
 
-    # Phase 1: Get current prices via Yahoo Finance spark endpoint (batch, fast)
-    try:
-        headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
-        for i in range(0, len(tickers), 20):
-            batch = tickers[i:i+20]
-            symbols = ",".join(batch)
-            url = f"https://query2.finance.yahoo.com/v8/finance/spark?symbols={symbols}&range=1d&interval=1d"
-            resp = requests.get(url, headers=headers, timeout=15)
-            if resp.status_code == 200:
-                data = resp.json()
-                for symbol, info in data.items():
-                    close_prices = info.get("close", [])
-                    prev_close = info.get("chartPreviousClose")
-                    if close_prices and prev_close and prev_close != 0:
-                        price = close_prices[-1]
-                        if price is None:
-                            continue
-                        change_pct = ((price - prev_close) / prev_close) * 100
-                        performance.append({
-                            "symbol": symbol,
-                            "price": price,
-                            "change_pct": change_pct,
-                            "volume": 0,
-                            "day_high": None,
-                            "day_low": None,
-                            "year_high": None,
-                            "year_low": None,
-                            "at_52w_high": False,
-                            "at_52w_low": False,
-                        })
-            time.sleep(0.3)
-    except Exception as e:
-        print(f"  Warning: Yahoo spark error: {e}")
+    # Phase 1: yfinance — actual pre/post market prices when outside regular hours
+    if YFINANCE_AVAILABLE:
+        try:
+            import warnings
+            warnings.filterwarnings("ignore", category=FutureWarning)
+            probe = yf.Ticker("AAPL").info
+            market_state = probe.get("marketState", "REGULAR")
+            detected_market_state = market_state
+
+            if market_state in ("PRE", "POST", "PREPRE", "POSTPOST"):
+                price_field = "preMarketPrice" if "PRE" in market_state else "postMarketPrice"
+                for symbol in tickers:
+                    try:
+                        info = yf.Ticker(symbol).info
+                        price = info.get(price_field)
+                        # No fallback: skip tickers without actual pre/post price
+                        prev_close = info.get("regularMarketPreviousClose")
+                        if price and prev_close and prev_close != 0:
+                            change_pct = ((price - prev_close) / prev_close) * 100
+                            found_symbols.add(symbol)
+                            performance.append({
+                                "symbol": symbol,
+                                "price": price,
+                                "change_pct": change_pct,
+                                "volume": 0,
+                                "day_high": None,
+                                "day_low": None,
+                                "year_high": None,
+                                "year_low": None,
+                                "at_52w_high": False,
+                                "at_52w_low": False,
+                            })
+                    except Exception:
+                        continue
+                if found_symbols:
+                    print(f"  yfinance: got {market_state.lower()} prices for {len(found_symbols)} tickers")
+        except Exception as e:
+            print(f"  Warning: yfinance portfolio error: {e}")
+
+    # Phase 2: Yahoo spark fallback (batch, fast) — ONLY during regular hours.
+    # During PRE/POST, spark range=1d returns yesterday's candles, not today's premarket.
+    spark_tickers = [t for t in tickers if t not in found_symbols]
+    if spark_tickers and detected_market_state == "REGULAR":
+        try:
+            headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+            for i in range(0, len(spark_tickers), 20):
+                batch = spark_tickers[i:i+20]
+                symbols = ",".join(batch)
+                url = (f"https://query2.finance.yahoo.com/v8/finance/spark?symbols={symbols}"
+                       f"&range=1d&interval=5m&includePrePost=true")
+                resp = requests.get(url, headers=headers, timeout=15)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for symbol, info in data.items():
+                        close_prices = [c for c in (info.get("close") or []) if c is not None]
+                        prev_close = info.get("chartPreviousClose")
+                        if close_prices and prev_close and prev_close != 0:
+                            price = close_prices[-1]
+                            change_pct = ((price - prev_close) / prev_close) * 100
+                            performance.append({
+                                "symbol": symbol,
+                                "price": price,
+                                "change_pct": change_pct,
+                                "volume": 0,
+                                "day_high": None,
+                                "day_low": None,
+                                "year_high": None,
+                                "year_low": None,
+                                "at_52w_high": False,
+                                "at_52w_low": False,
+                            })
+                time.sleep(0.3)
+        except Exception as e:
+            print(f"  Warning: Yahoo spark error: {e}")
 
     # Phase 2: Enrich with 52-week data via yfinance if available
     if YFINANCE_AVAILABLE and performance:
@@ -1100,8 +1209,8 @@ def fetch_rsi_alerts(api_key: str, tickers: list[str], oversold_threshold: int =
 
     # Check priority tickers only (limit API calls)
     priority_tickers = [
-        "PLTR", "NVDA", "TSLA", "META", "AMZN", "GOOGL", "AMD", "SOFI", "UBER",
-        "MSFT", "AAPL", "JPM", "COST", "ABNB", "AFRM", "HIMS", "NU", "ASML"
+        "PLTR", "NVDA", "TSLA", "META", "AMZN", "GOOG", "AMD", "SOFI", "UBER",
+        "MSFT", "AAPL", "JPM", "COST", "ABNB", "AFRM", "HIMS", "NU", "ASML", "AVAV", "ARCC"
     ]
     tickers_to_check = [t for t in priority_tickers if t in tickers][:15]
 
@@ -1709,6 +1818,105 @@ Based ONLY on facts clearly stated in the news headlines, in ONE brief sentence 
 # FORMATTING
 # ============================================================================
 
+
+def _lunarcrush_signals(sentiment: int, trend: str, interactions_raw: int,
+                        num_posts: int) -> list[str]:
+    """Generate tiered LunarCrush signals. Returns only actionable/watch items.
+
+    ⚡ = high-confidence, historically predictive (ACTION)
+    ⚠️ = notable but not yet actionable (WATCH)
+    Normal-range activity is suppressed (no noise).
+    """
+    signals = []
+
+    # ── Engagement level ──
+    if interactions_raw > 100000:
+        signals.append("⚡ BUZZ SPIKE (>100K eng): sharp move likely within 24h")
+    elif interactions_raw > 50000:
+        signals.append("⚠️ ELEVATED (>50K eng): above-avg volatility likely within 48h")
+    elif interactions_raw < 1000 and num_posts > 0:
+        signals.append("⚠️ APATHY: posts with no engagement — drift until next catalyst")
+    # 1K-50K = normal range → suppress
+
+    # ── Sentiment-trend divergence (most predictive LunarCrush signals) ──
+    if sentiment > 65 and trend == "down":
+        signals.append("⚡ FADING: bullish crowd + falling momentum → 2-5 day pullback pattern")
+    elif sentiment < 35 and trend == "up":
+        signals.append("⚡ CONTRARIAN: bearish crowd + rising momentum → reliable bottom indicator")
+    elif sentiment > 70 and trend == "up":
+        signals.append("⚠️ CROWDED LONG: consensus bullish — reversal risk rising")
+    elif sentiment < 30 and trend == "down":
+        signals.append("⚠️ WASHOUT: deep negativity — bounce likely 1-2 wks but can overshoot")
+
+    # ── Extreme sentiment ──
+    if sentiment > 80:
+        signals.append("⚡ EUPHORIA (sent >80): reliable fade signal within 3-5 sessions")
+    elif sentiment < 20:
+        signals.append("⚡ FEAR (sent <20): historically marks local bottoms")
+
+    # ── Signal quality (posts-to-engagement ratio) ──
+    if num_posts > 0 and interactions_raw > 0:
+        eng_per_post = interactions_raw / num_posts
+        if eng_per_post > 500:
+            signals.append("⚠️ HIGH SIGNAL: few posts, massive engagement — institutional/influencer catalyst")
+        # Low eng/post with many posts = noise about noise → suppress
+
+    return signals
+
+
+def _format_lunarcrush_ticker(item: dict) -> list[str]:
+    """Format a single ticker's LunarCrush data + signals into display lines."""
+    symbol = item["symbol"]
+    interactions_raw = item.get("interactions_24h", 0)
+    sentiment = item.get("sentiment", 50)
+    num_posts = item.get("num_posts", 0)
+    trend = item.get("trend", "flat")
+
+    # Trend arrow (only place 🟢/🔴 appear)
+    if trend == "up":
+        trend_icon = "🟢▲"
+    elif trend == "down":
+        trend_icon = "🔴▼"
+    else:
+        trend_icon = "⚪→"
+
+    # Compact engagement display
+    if interactions_raw >= 1_000_000:
+        eng_str = f"{interactions_raw / 1_000_000:.1f}M"
+    elif interactions_raw >= 1000:
+        eng_str = f"{interactions_raw / 1000:.1f}K"
+    else:
+        eng_str = str(interactions_raw)
+
+    # Sentiment label (no emoji — trend arrow already has color)
+    if sentiment > 70:
+        sent_label = "strong bull"
+    elif sentiment > 60:
+        sent_label = "bullish"
+    elif sentiment < 30:
+        sent_label = "strong bear"
+    elif sentiment < 40:
+        sent_label = "bearish"
+    else:
+        sent_label = "neutral"
+
+    # Compact posts display
+    if num_posts >= 1000:
+        posts_str = f"{num_posts / 1000:.1f}K"
+    else:
+        posts_str = str(num_posts)
+
+    lines = []
+    lines.append(f"  {symbol:<6} {trend_icon}  {eng_str} eng · {sentiment}% {sent_label} · {posts_str} posts")
+
+    # Signals — one line each, indented
+    signals = _lunarcrush_signals(sentiment, trend, interactions_raw, num_posts)
+    for sig in signals:
+        lines.append(f"         {sig}")
+
+    return lines
+
+
 def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: list[dict],
                     social_alerts: list[dict], miss_explanations: dict, holdings_count: int,
                     market_snapshot: dict = None, premarket_movers: list[dict] = None,
@@ -1765,80 +1973,6 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
         
         lines.append("")
 
-    # LunarCrush Social Intelligence
-    if social_alerts:
-        lines.append("┌─────────────────────────────────────┐")
-        lines.append("│   LUNARCRUSH · SOCIAL INTELLIGENCE  │")
-        lines.append("└─────────────────────────────────────┘")
-        lines.append("")
-
-        for item in social_alerts:
-            symbol = item["symbol"]
-            interactions = item.get("interactions_display", "?")
-            sentiment = item.get("sentiment", 50)
-            num_posts = item.get("num_posts", 0)
-            trend = item.get("trend", "flat")
-
-            trend_icon = "▲" if trend == "up" else "▼" if trend == "down" else "→"
-            if sentiment > 70:
-                sent_label = "strong bull"
-            elif sentiment > 60:
-                sent_label = "bullish"
-            elif sentiment < 30:
-                sent_label = "strong bear"
-            elif sentiment < 40:
-                sent_label = "bearish"
-            else:
-                sent_label = "neutral"
-
-            if num_posts >= 1000:
-                posts_str = f"{num_posts / 1000:.1f}K"
-            else:
-                posts_str = str(num_posts)
-
-            lines.append(f"  {symbol:<6} {trend_icon} {interactions:>7} engagements · {sentiment}% {sent_label}")
-            lines.append(f"         {posts_str} posts · trend: {trend}")
-            lines.append("")
-
-        lines.append("  src: lunarcrush.com")
-        lines.append("")
-
-    # Creator Signals
-    if creator_signals:
-        lines.append("┌─────────────────────────────────────┐")
-        lines.append("│   KEY VOICES · CREATOR SIGNALS      │")
-        lines.append("└─────────────────────────────────────┘")
-        lines.append("")
-
-        for creator in creator_signals:
-            handle = creator["handle"]
-            name = creator["name"]
-            fol = creator["followers_display"]
-            eng = creator["engagements_display"]
-            holding_topics = creator.get("holding_topics", [])
-            top_topics = creator.get("top_topics", [])
-
-            lines.append(f"  {name} (@{handle}) · {fol} followers · {eng} eng/24h")
-
-            if holding_topics:
-                parts = []
-                for ht in holding_topics[:4]:
-                    topic = ht["topic"].upper()
-                    count = ht["count"]
-                    parts.append(f"{topic}({count})")
-                lines.append(f"    YOUR HOLDINGS: {', '.join(parts)}")
-            elif top_topics:
-                parts = []
-                for tt in top_topics[:3]:
-                    topic = tt["topic"]
-                    count = tt["count"]
-                    parts.append(f"{topic}({count})")
-                lines.append(f"    talking: {', '.join(parts)}")
-
-            lines.append("")
-
-        lines.append("")
-
     # Pre-Market Movers
     if premarket_movers:
         lines.append("▸ PRE-MARKET MOVERS")
@@ -1879,8 +2013,6 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
     if not has_content:
         lines.append("▸ All clear. No material events today.")
         lines.append("")
-
-    # Social Buzz moved to dedicated LunarCrush section above
 
     # Urgent - show full detail
     if urgent:
@@ -2001,6 +2133,67 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
             if link:
                 lines.append(f"      {link}")
             lines.append("")
+
+    # LunarCrush Social Intelligence (last content section)
+    if social_alerts:
+        lines.append("┌─────────────────────────────────────┐")
+        lines.append("│   LUNARCRUSH · SOCIAL INTELLIGENCE  │")
+        lines.append("└─────────────────────────────────────┘")
+        lines.append("")
+
+        for item in social_alerts:
+            lines.extend(_format_lunarcrush_ticker(item))
+            lines.append("")
+
+        lines.append("  ⚡ = actionable signal  ⚠️ = watch")
+        lines.append("  src: lunarcrush.com")
+        lines.append("")
+
+    # Creator Signals
+    if creator_signals:
+        lines.append("┌─────────────────────────────────────┐")
+        lines.append("│   KEY VOICES · CREATOR SIGNALS      │")
+        lines.append("└─────────────────────────────────────┘")
+        lines.append("")
+
+        for creator in creator_signals:
+            handle = creator["handle"]
+            name = creator["name"]
+            fol = creator["followers_display"]
+            eng = creator["engagements_display"]
+            holding_topics = creator.get("holding_topics", [])
+            top_topics = creator.get("top_topics", [])
+            eng_raw = creator.get("engagements_24h", 0)
+
+            # Color-code creator engagement level
+            if eng_raw > 500000:
+                eng_flag = " 🔥"
+            elif eng_raw > 100000:
+                eng_flag = " 🟢"
+            else:
+                eng_flag = ""
+
+            lines.append(f"  {name} (@{handle}) · {fol} followers · {eng} eng/24h{eng_flag}")
+
+            if holding_topics:
+                parts = []
+                for ht in holding_topics[:4]:
+                    topic = ht["topic"].upper()
+                    count = ht["count"]
+                    parts.append(f"{topic}({count})")
+                lines.append(f"    🟢 YOUR HOLDINGS: {', '.join(parts)}")
+                lines.append(f"    key-voice overlap with your book — monitor for position sizing signals")
+            elif top_topics:
+                parts = []
+                for tt in top_topics[:3]:
+                    topic = tt["topic"]
+                    count = tt["count"]
+                    parts.append(f"{topic}({count})")
+                lines.append(f"    talking: {', '.join(parts)}")
+
+            lines.append("")
+
+        lines.append("")
 
     # Footer
     lines.append("────────────────────────────────────")
@@ -2296,71 +2489,23 @@ def format_lunarcrush_brief(social_alerts: list[dict], creator_signals: list[dic
 
     # ── Holdings Social Dashboard ──
     if social_alerts:
-        lines.append("▸ YOUR HOLDINGS")
+        lines.append("▸ YOUR HOLDINGS — SOCIAL PULSE")
         lines.append("")
 
         for item in social_alerts:
-            symbol = item["symbol"]
-            interactions = item.get("interactions_display", "?")
-            sentiment = item.get("sentiment", 50)
-            num_posts = item.get("num_posts", 0)
-            trend = item.get("trend", "flat")
-            interactions_raw = item.get("interactions_24h", 0)
-
-            trend_icon = "▲" if trend == "up" else "▼" if trend == "down" else "→"
-            if sentiment > 70:
-                sent_label = "strong bull"
-            elif sentiment > 60:
-                sent_label = "bullish"
-            elif sentiment < 30:
-                sent_label = "strong bear"
-            elif sentiment < 40:
-                sent_label = "bearish"
-            else:
-                sent_label = "neutral"
-
-            # Intelligence overlay
-            signals = []
-            # Engagement level classification
-            if interactions_raw > 100000:
-                signals.append("extraordinary buzz — institutional or viral event likely")
-            elif interactions_raw > 50000:
-                signals.append("elevated attention — news-driven or catalyst pending")
-            elif interactions_raw > 10000:
-                signals.append("active discussion")
-            elif interactions_raw < 1000 and num_posts > 0:
-                signals.append("low engagement despite posts — market apathy")
-
-            # Sentiment-trend divergence
-            if sentiment > 65 and trend == "down":
-                signals.append("crowd bullish but momentum fading — watch for reversal")
-            elif sentiment < 35 and trend == "up":
-                signals.append("crowd bearish but momentum building — contrarian signal")
-            elif sentiment > 70 and trend == "up":
-                signals.append("consensus bullish + rising — potential crowded trade")
-            elif sentiment < 30 and trend == "down":
-                signals.append("capitulation signal — sentiment + trend both negative")
-
-            # Format posts count
-            if num_posts >= 1000:
-                posts_str = f"{num_posts / 1000:.1f}K"
-            else:
-                posts_str = str(num_posts)
-
-            lines.append(f"  {symbol:<6} {trend_icon} {interactions:>7} engagements · {sentiment}% {sent_label}")
-            lines.append(f"         {posts_str} posts · trend: {trend}")
-            if signals:
-                for sig in signals:
-                    lines.append(f"         ⚡ {sig}")
-            lines.append(f"         https://lunarcrush.com/topic/{symbol.lower()}")
+            lines.extend(_format_lunarcrush_ticker(item))
+            lines.append(f"         https://lunarcrush.com/topic/{item['symbol'].lower()}")
             lines.append("")
+
+        lines.append("  ⚡ = actionable signal  ⚠️ = watch")
+        lines.append("")
     else:
         lines.append("  No social data available for holdings today.")
         lines.append("")
 
     # ── Creator Signals ──
     if creator_signals:
-        lines.append("▸ KEY VOICES")
+        lines.append("▸ KEY VOICES — CREATOR SIGNALS")
         lines.append("")
 
         for creator in creator_signals:
@@ -2370,8 +2515,17 @@ def format_lunarcrush_brief(social_alerts: list[dict], creator_signals: list[dic
             eng = creator["engagements_display"]
             holding_topics = creator.get("holding_topics", [])
             top_topics = creator.get("top_topics", [])
+            eng_raw = creator.get("engagements_24h", 0)
 
-            lines.append(f"  {name} (@{handle}) · {fol} followers · {eng} eng/24h")
+            # Color-code creator engagement level
+            if eng_raw > 500000:
+                eng_flag = " 🔥 viral reach"
+            elif eng_raw > 100000:
+                eng_flag = " 🟢 high engagement"
+            else:
+                eng_flag = ""
+
+            lines.append(f"  {name} (@{handle}) · {fol} followers · {eng} eng/24h{eng_flag}")
 
             if holding_topics:
                 parts = []
@@ -2379,7 +2533,8 @@ def format_lunarcrush_brief(social_alerts: list[dict], creator_signals: list[dic
                     topic = ht["topic"].upper()
                     count = ht["count"]
                     parts.append(f"{topic}({count})")
-                lines.append(f"    YOUR HOLDINGS: {', '.join(parts)}")
+                lines.append(f"    🟢 YOUR HOLDINGS: {', '.join(parts)}")
+                lines.append(f"    key-voice overlap with your book — historically, sustained creator attention precedes 1-3 week trends")
             elif top_topics:
                 parts = []
                 for tt in top_topics[:3]:
@@ -2670,7 +2825,12 @@ def run_morning_briefing():
     earnings = merge_upcoming_earnings(finnhub_upcoming, yf_upcoming)
     print(f"  Combined: {len(earnings)} upcoming earnings this week")
 
-    print("\n[4/10] Fetching earnings scorecard (last 3 weeks) (Finnhub)...")
+    # RSI moved early — Alpha Vantage calls get natural cooldown before AV earnings lookup
+    print("\n[4/10] Fetching RSI alerts (Alpha Vantage)...")
+    rsi_alerts = fetch_rsi_alerts(CONFIG["ALPHA_VANTAGE_API_KEY"], CONFIG["INDIVIDUAL_STOCKS"])
+    print(f"  Found {len(rsi_alerts)} stocks with RSI alerts")
+
+    print("\n[5/10] Fetching earnings scorecard (last 3 weeks) (Finnhub)...")
     finnhub_scorecard = fetch_earnings_scorecard(CONFIG["FINNHUB_API_KEY"], ticker_set)
     print(f"  Found {len(finnhub_scorecard)} from Finnhub")
 
@@ -2679,7 +2839,7 @@ def run_morning_briefing():
 
     # yfinance is the most reliable secondary source (FMP endpoints are dead, Yahoo v10 returns 401)
     still_missing = len(ticker_set - found_symbols)
-    print(f"\n[5/10] yfinance earnings lookup for {still_missing} remaining tickers...")
+    print(f"\n[6/10] yfinance earnings lookup for {still_missing} remaining tickers...")
     yf_scorecard = fetch_yfinance_earnings(ticker_set, found_symbols)
     print(f"  Found {len(yf_scorecard)} additional via yfinance")
 
@@ -2687,7 +2847,8 @@ def run_morning_briefing():
     found_symbols.update({item["symbol"] for item in yf_scorecard})
     still_missing = len(ticker_set - found_symbols)
 
-    print(f"\n[5b/10] Alpha Vantage lookup for {still_missing} remaining tickers...")
+    # Alpha Vantage earnings — naturally spaced from RSI calls above by Finnhub + yfinance work
+    print(f"\n[6b/10] Alpha Vantage lookup for {still_missing} remaining tickers...")
     alpha_scorecard = fetch_alpha_vantage_earnings(CONFIG["ALPHA_VANTAGE_API_KEY"], ticker_set - found_symbols) if still_missing > 0 else []
     print(f"  Found {len(alpha_scorecard)} additional via Alpha Vantage")
 
@@ -2695,15 +2856,16 @@ def run_morning_briefing():
     scorecard = merge_earnings_data(finnhub_scorecard, [], None, yf_scorecard, None, alpha_scorecard)
     print(f"  Combined: {len(scorecard)} unique earnings results (3-week lookback)")
 
-    print("\n[6/10] Fetching pre-market movers...")
+    print("\n[7/10] Fetching pre-market movers...")
     premarket_movers = fetch_premarket_movers(CONFIG["FMP_API_KEY"], all_tickers, threshold=3.0)
     print(f"  Found {len(premarket_movers)} holdings moving >3%")
 
-    print("\n[7/10] Checking social buzz (LunarCrush)...")
+    # LunarCrush calls — now separated from Alpha Vantage by FMP/Finnhub/yfinance work
+    print("\n[8/10] Checking social buzz (LunarCrush)...")
     social_alerts = fetch_social_buzz(CONFIG["INDIVIDUAL_STOCKS"], CONFIG["LUNARCRUSH_API_KEY"], CONFIG["SOCIAL_BUZZ_THRESHOLD"])
     print(f"  Found social data for {len(social_alerts)} tickers")
 
-    print("\n[7b/10] Checking creator signals (LunarCrush)...")
+    print("\n[8b/10] Checking creator signals (LunarCrush)...")
     creator_signals = fetch_creator_signals(
         CONFIG["CREATOR_WATCHLIST"],
         CONFIG["LUNARCRUSH_API_KEY"],
@@ -2711,13 +2873,9 @@ def run_morning_briefing():
     )
     print(f"  Got data for {len(creator_signals)} creators")
 
-    print("\n[8/10] Filtering news with AI...")
+    print("\n[9/10] Filtering news with AI...")
     filtered_news = filter_news_with_ai(news, CONFIG["ANTHROPIC_API_KEY"])
     print(f"  {len(filtered_news)} items after filtering")
-
-    print("\n[9/10] Fetching RSI alerts (Alpha Vantage)...")
-    rsi_alerts = fetch_rsi_alerts(CONFIG["ALPHA_VANTAGE_API_KEY"], CONFIG["INDIVIDUAL_STOCKS"])
-    print(f"  Found {len(rsi_alerts)} stocks with RSI alerts")
 
     print("\n[10/10] Fetching Vital Knowledge highlights...")
     vk_highlights = fetch_vital_knowledge(
@@ -2732,25 +2890,60 @@ def run_morning_briefing():
     miss_explanations = explain_earnings_misses(misses, CONFIG["ANTHROPIC_API_KEY"])
     print(f"  Generated explanations for {len(miss_explanations)} misses")
 
-    print("\nGenerating briefing...")
-    briefing = format_briefing(filtered_news, earnings, scorecard, social_alerts, miss_explanations,
-                               len(all_tickers), market_snapshot, premarket_movers, rsi_alerts, vk_highlights,
-                               creator_signals=creator_signals)
+    # ── v2 REDESIGN: AI-powered editorial brief ──────────────────────────
+    print("\n[10/10] Generating AI intelligence brief...")
 
-    # Print briefing to console
+    # Bundle all data for the AI
+    briefing_data = {
+        "market_snapshot": market_snapshot,
+        "premarket_movers": premarket_movers,
+        "filtered_news": filtered_news,
+        "scorecard": scorecard,
+        "earnings": earnings,
+        "rsi_alerts": rsi_alerts,
+        "vk_highlights": vk_highlights if vk_highlights else [],
+        "miss_explanations": miss_explanations,
+        "social_alerts": [],       # Social is in separate 6:20 AM brief
+        "creator_signals": [],
+    }
+
+    try:
+        ai_brief = generate_ai_morning_brief(briefing_data, CONFIG["ANTHROPIC_API_KEY"])
+        print("  ✓ AI brief generated")
+
+        # Format HTML email
+        html_email = format_morning_html(ai_brief, briefing_data)
+        print(f"  ✓ HTML email: {len(html_email):,} bytes")
+
+        # Format plain text iMessage
+        text_message = format_morning_text(ai_brief, briefing_data)
+        print(f"  ✓ Plain text: {len(text_message):,} chars")
+
+    except Exception as e:
+        print(f"  ✗ AI brief failed: {e}")
+        print("  Falling back to legacy formatter...")
+        text_message = format_briefing(filtered_news, earnings, scorecard, [], miss_explanations,
+                                       len(all_tickers), market_snapshot, premarket_movers, rsi_alerts, vk_highlights)
+        html_email = None
+
+    # Print to console
     print("\n" + "=" * 50)
-    print(briefing)
+    print(text_message)
     print("=" * 50)
 
-    # Send via iMessage
+    # Send via iMessage (plain text)
     print(f"\nSending iMessage to {CONFIG['IMESSAGE_RECIPIENT']}...")
-    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], briefing)
+    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], text_message)
 
-    # Send via Email
+    # Send via Email (HTML if available, plain text fallback)
     print(f"Sending email to {CONFIG['EMAIL_RECIPIENT']}...")
     today = datetime.now().strftime("%B %d, %Y")
-    email_subject = f"Morning Briefing - {today}"
-    email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, briefing)
+    if html_email:
+        email_subject = f"Morning Brief \u2013 {today}"
+        email_success = send_html_email(CONFIG["EMAIL_RECIPIENT"], email_subject, html_email)
+    else:
+        email_subject = f"Morning Briefing - {today}"
+        email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, text_message)
 
     if imessage_success and email_success:
         print("\n✓ Morning briefing delivered via iMessage and Email!")
