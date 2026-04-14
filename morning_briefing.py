@@ -2320,7 +2320,9 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
                 actual = item.get("eps_actual", 0)
                 estimate = item.get("eps_estimate", 0)
                 surprise_pct = item.get("surprise_pct", 0)
-                lines.append(f"  🟢 {symbol:<6} EPS ${actual:.2f} vs ${estimate:.2f} (+{surprise_pct:.1f}%)")
+                rpt_date = item.get("date", "")
+                date_tag = f"  ({rpt_date})" if rpt_date else ""
+                lines.append(f"  🟢 {symbol:<6} EPS ${actual:.2f} vs ${estimate:.2f} (+{surprise_pct:.1f}%){date_tag}")
                 # Revenue sub-line
                 rev_actual = item.get("rev_actual")
                 rev_estimate = item.get("rev_estimate")
@@ -2341,7 +2343,9 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
                 actual = item.get("eps_actual", 0)
                 estimate = item.get("eps_estimate", 0)
                 surprise_pct = item.get("surprise_pct", 0)
-                lines.append(f"  🔴 {symbol:<6} EPS ${actual:.2f} vs ${estimate:.2f} ({surprise_pct:.1f}%)")
+                rpt_date = item.get("date", "")
+                date_tag = f"  ({rpt_date})" if rpt_date else ""
+                lines.append(f"  🔴 {symbol:<6} EPS ${actual:.2f} vs ${estimate:.2f} ({surprise_pct:.1f}%){date_tag}")
                 # Revenue sub-line
                 rev_actual = item.get("rev_actual")
                 rev_estimate = item.get("rev_estimate")

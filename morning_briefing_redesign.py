@@ -575,9 +575,12 @@ def _format_scorecard_table(scorecard: list[dict[str, Any]]) -> str:
             guide_color = "#ccc"
             guide_str = "—"
 
+        rpt_date = item.get("date", "")
+
         rows += f"""
 <tr style="border-bottom: 1px solid #e8e3de;">
     <td style="font-weight: 700;">{symbol}</td>
+    <td style="color: #999; font-size: 12px;">{rpt_date}</td>
     <td style="color: {badge_color}; font-weight: 600; text-align: center;">{beat_status}</td>
     <td style="text-align: right;">{eps_a_str}</td>
     <td style="text-align: right; color: #999;">{eps_e_str}</td>
@@ -591,6 +594,7 @@ def _format_scorecard_table(scorecard: list[dict[str, Any]]) -> str:
 <table width="100%" cellpadding="10" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Arial, sans-serif; font-size: 13px;">
 <tr style="background-color: #ebe7e1;">
     <td style="font-weight: 700; color: #1a1a1a;">Ticker</td>
+    <td style="font-weight: 700; color: #1a1a1a;">Date</td>
     <td style="font-weight: 700; color: #1a1a1a; text-align: center;">Result</td>
     <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Actual EPS</td>
     <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Est. EPS</td>
@@ -784,7 +788,9 @@ def format_morning_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
                 guide_mark = " ↑"
             elif "lowered" in guidance:
                 guide_mark = " ↓"
-            text += f"  {symbol:<6} {beat_status:<8} EPS {surp_str:>8}{rev_mark}{guide_mark}\n"
+            rpt_date = item.get("date", "")
+            date_tag = f" ({rpt_date})" if rpt_date else ""
+            text += f"  {symbol:<6} {beat_status:<8} EPS {surp_str:>8}{rev_mark}{guide_mark}{date_tag}\n"
 
     analyst_actions = data.get("analyst_actions", {})
     if analyst_actions:
