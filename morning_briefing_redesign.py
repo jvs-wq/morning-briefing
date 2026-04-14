@@ -177,11 +177,20 @@ PRE-MARKET MOVERS (>3% or strategically important):
     else:
         payload += "- No RSI extremes detected\n"
 
-    payload += "\nEARNINGS SCORECARD (recent reports):\n"
+    payload += "\nEARNINGS SCORECARD (recent reports, 4-week lookback):\n"
     if scorecard:
         for item in scorecard[:15]:
             beat_status = "BEAT" if item.get('beat') else "MISS"
-            payload += f"- {item.get('symbol', 'N/A')}: {beat_status} | EPS: {item.get('eps_actual', 'N/A')} vs {item.get('eps_estimate', 'N/A')} ({item.get('surprise_pct', 'N/A')}) | Revenue: {item.get('rev_beat', 'N/A')} ({item.get('rev_surprise_pct', 'N/A')})\n"
+            rev_str = ""
+            rev_a = item.get('rev_actual')
+            rev_e = item.get('rev_estimate')
+            if rev_a and rev_e:
+                rev_a_fmt = f"${rev_a/1e9:.1f}B" if isinstance(rev_a, (int, float)) and rev_a >= 1e9 else str(rev_a)
+                rev_e_fmt = f"${rev_e/1e9:.1f}B" if isinstance(rev_e, (int, float)) and rev_e >= 1e9 else str(rev_e)
+                rev_str = f" | Rev: {rev_a_fmt} vs {rev_e_fmt} ({'beat' if item.get('rev_beat') else 'miss'})"
+            guidance = item.get('guidance_signal', '')
+            guidance_str = f" | Guidance: {guidance}" if guidance else ""
+            payload += f"- {item.get('symbol', 'N/A')}: {beat_status} | EPS: {item.get('eps_actual', 'N/A')} vs {item.get('eps_estimate', 'N/A')} ({item.get('surprise_pct', 'N/A')}%){rev_str}{guidance_str}\n"
     else:
         payload += "- No recent earnings in portfolio\n"
 
@@ -196,6 +205,20 @@ PRE-MARKET MOVERS (>3% or strategically important):
         payload += "\nEARNINGS MISS CONTEXT:\n"
         for symbol, explanation in misses.items():
             payload += f"- {symbol}: {explanation}\n"
+
+    analyst_actions = data.get("analyst_actions", {})
+    if analyst_actions:
+        payload += "\nANALYST ACTIONS (last 7 days):\n"
+        for symbol in sorted(analyst_actions.keys()):
+            for a in analyst_actions[symbol][:2]:
+                analyst = a.get("analyst", "?")
+                action = a.get("action", "")
+                prior = a.get("prior_rating", "")
+                pt = a.get("price_target")
+                prior_pt = a.get("prior_target")
+                pt_str = f" PT ${prior_pt:.0f}→${pt:.0f}" if pt and prior_pt else (f" PT ${pt:.0f}" if pt else "")
+                rating_str = f"{prior}→{action}" if prior else action
+                payload += f"- {symbol}: {analyst} {rating_str}{pt_str}\n"
 
     payload += "\nMATERIAL NEWS (filtered for portfolio relevance):\n"
     if news:
@@ -361,6 +384,8 @@ APPENDIX: DETAILED DATA
 
 {_format_full_earnings_table(scorecard, earnings) if scorecard or earnings else '<p style="font-family: Arial, sans-serif; font-size: 13px; color: #999;">No earnings data available</p>'}
 
+{_format_analyst_actions_table(data.get("analyst_actions", {}))}
+
 {_format_full_news_table(news) if news else '<p style="font-family: Arial, sans-serif; font-size: 13px; color: #999;">No news data available</p>'}
 
 <!-- FOOTER -->
@@ -492,13 +517,25 @@ def _format_movers_table(movers: list[dict[str, Any]]) -> str:
 """
 
 
+def _format_rev(value) -> str:
+    """Format revenue as human-readable: $98.2B, $4.3B, $450M, etc."""
+    if value is None or not isinstance(value, (int, float)):
+        return ""
+    abs_val = abs(value)
+    if abs_val >= 1e9:
+        return f"${value / 1e9:.1f}B"
+    elif abs_val >= 1e6:
+        return f"${value / 1e6:.0f}M"
+    return f"${value:,.0f}"
+
+
 def _format_scorecard_table(scorecard: list[dict[str, Any]]) -> str:
-    """Format recent earnings scorecard."""
+    """Format recent earnings scorecard with revenue and guidance."""
     if not scorecard:
         return ""
 
     rows = ""
-    for item in scorecard[:8]:
+    for item in scorecard[:10]:
         symbol = item.get("symbol", "N/A")
         beat_status = "BEAT" if item.get("beat") else "MISS"
         eps_actual = item.get("eps_actual", 0)
@@ -512,6 +549,30 @@ def _format_scorecard_table(scorecard: list[dict[str, Any]]) -> str:
         surp_str = f"{surp_sign}{surprise:.1f}%" if isinstance(surprise, (int, float)) else str(surprise)
         surp_color = "#27ae60" if isinstance(surprise, (int, float)) and surprise >= 0 else "#c0392b"
 
+        # Revenue column
+        rev_a = _format_rev(item.get("rev_actual"))
+        rev_e = _format_rev(item.get("rev_estimate"))
+        if rev_a and rev_e:
+            rev_color = "#27ae60" if item.get("rev_beat") else "#c0392b"
+            rev_str = f'<span style="color: {rev_color};">{rev_a}</span> / {rev_e}'
+        else:
+            rev_str = "—"
+
+        # Guidance column
+        guidance = item.get("guidance_signal", "")
+        if "raised" in guidance:
+            guide_color = "#27ae60"
+            guide_str = "&#x25B2; Raised"
+        elif "lowered" in guidance:
+            guide_color = "#c0392b"
+            guide_str = "&#x25BC; Lowered"
+        elif "in-line" in guidance:
+            guide_color = "#999"
+            guide_str = "&#x25C6; In-line"
+        else:
+            guide_color = "#ccc"
+            guide_str = "—"
+
         rows += f"""
 <tr style="border-bottom: 1px solid #e8e3de;">
     <td style="font-weight: 700;">{symbol}</td>
@@ -519,6 +580,8 @@ def _format_scorecard_table(scorecard: list[dict[str, Any]]) -> str:
     <td style="text-align: right;">{eps_a_str}</td>
     <td style="text-align: right; color: #999;">{eps_e_str}</td>
     <td style="text-align: right; color: {surp_color}; font-weight: 600;">{surp_str}</td>
+    <td style="text-align: right;">{rev_str}</td>
+    <td style="text-align: center; color: {guide_color}; font-weight: 600;">{guide_str}</td>
 </tr>
 """
 
@@ -529,7 +592,9 @@ def _format_scorecard_table(scorecard: list[dict[str, Any]]) -> str:
     <td style="font-weight: 700; color: #1a1a1a; text-align: center;">Result</td>
     <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Actual EPS</td>
     <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Est. EPS</td>
-    <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Surprise %</td>
+    <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Surprise</td>
+    <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Revenue</td>
+    <td style="font-weight: 700; color: #1a1a1a; text-align: center;">Guidance</td>
 </tr>
 {rows}
 </table>
@@ -541,18 +606,24 @@ def _format_full_earnings_table(scorecard: list[dict[str, Any]], earnings: list[
     html = ""
 
     if scorecard:
-        html += '<h4 style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; color: #1a1a1a; margin: 24px 0 12px 0; text-transform: uppercase;">Recent Earnings</h4>'
+        html += '<h4 style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; color: #1a1a1a; margin: 24px 0 12px 0; text-transform: uppercase;">Recent Earnings (4-Week Lookback)</h4>'
         html += '<table width="100%" cellpadding="8" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; font-family: Arial, sans-serif; font-size: 12px;">'
-        html += '<tr style="background-color: #ebe7e1;"><td style="font-weight: 700;">Ticker</td><td>Result</td><td>EPS Act./Est.</td><td>Rev. Beat</td></tr>'
+        html += '<tr style="background-color: #ebe7e1;"><td style="font-weight: 700;">Ticker</td><td>Date</td><td>Result</td><td>EPS Act./Est.</td><td>Revenue</td><td>Guidance</td></tr>'
 
         for item in scorecard[:15]:
             symbol = item.get("symbol", "N/A")
+            date = item.get("date", "N/A")
             beat = "BEAT" if item.get("beat") else "MISS"
+            beat_color = "#27ae60" if item.get("beat") else "#c0392b"
             eps_a = item.get("eps_actual", "N/A")
             eps_e = item.get("eps_estimate", "N/A")
-            rev = item.get("rev_beat", "N/A")
+            eps_str = f"${eps_a:.2f} / ${eps_e:.2f}" if isinstance(eps_a, (int, float)) and isinstance(eps_e, (int, float)) else f"{eps_a} / {eps_e}"
+            rev_a = _format_rev(item.get("rev_actual"))
+            rev_e = _format_rev(item.get("rev_estimate"))
+            rev_str = f"{rev_a} / {rev_e}" if rev_a and rev_e else "—"
+            guidance = item.get("guidance_signal", "—") or "—"
 
-            html += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="font-weight: 700;">{symbol}</td><td>{beat}</td><td>{eps_a} / {eps_e}</td><td>{rev}</td></tr>'
+            html += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="font-weight: 700;">{symbol}</td><td>{date}</td><td style="color: {beat_color}; font-weight: 600;">{beat}</td><td>{eps_str}</td><td>{rev_str}</td><td>{guidance}</td></tr>'
 
         html += '</table>'
 
@@ -572,6 +643,42 @@ def _format_full_earnings_table(scorecard: list[dict[str, Any]], earnings: list[
         html += '</table>'
 
     return html
+
+
+def _format_analyst_actions_table(analyst_actions: dict) -> str:
+    """Format analyst upgrades/downgrades/price target changes for HTML email."""
+    if not analyst_actions:
+        return ""
+
+    rows = ""
+    for symbol in sorted(analyst_actions.keys()):
+        for a in analyst_actions[symbol][:3]:
+            analyst = a.get("analyst", "?")
+            action = a.get("action", "")
+            prior = a.get("prior_rating", "")
+            pt = a.get("price_target")
+            prior_pt = a.get("prior_target")
+            date = a.get("date", "")
+
+            rating_str = f"{prior} &rarr; {action}" if prior else action
+            if pt and prior_pt:
+                direction_color = "#27ae60" if pt > prior_pt else "#c0392b"
+                arrow = "&uarr;" if pt > prior_pt else "&darr;"
+                pt_str = f'<span style="color: {direction_color};">${prior_pt:.0f} &rarr; ${pt:.0f} {arrow}</span>'
+            elif pt:
+                pt_str = f"${pt:.0f}"
+            else:
+                pt_str = "—"
+
+            rows += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="font-weight: 700;">{symbol}</td><td>{analyst}</td><td>{rating_str}</td><td style="text-align: right;">{pt_str}</td><td style="color: #999;">{date}</td></tr>'
+
+    return f"""
+<h4 style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; color: #1a1a1a; margin: 24px 0 12px 0; text-transform: uppercase;">Analyst Actions (7 Days)</h4>
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; font-family: Arial, sans-serif; font-size: 12px;">
+<tr style="background-color: #ebe7e1;"><td style="font-weight: 700;">Ticker</td><td>Analyst</td><td>Rating</td><td style="text-align: right;">Price Target</td><td>Date</td></tr>
+{rows}
+</table>
+"""
 
 
 def _format_full_news_table(news: list[dict[str, Any]]) -> str:
@@ -656,12 +763,43 @@ def format_morning_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
 """
 
     if scorecard:
-        text += "\nRECENT SCORES:\n"
+        text += "\nRECENT SCORES (4-wk):\n"
         for item in scorecard[:8]:
             symbol = item.get("symbol", "N/A")
             beat_status = "✓ BEAT" if item.get("beat") else "✗ MISS"
-            surprise = item.get("surprise_pct", "N/A")
-            text += f"  {symbol:<6} {beat_status:<8} EPS {surprise:>8}\n"
+            surprise = item.get("surprise_pct", 0)
+            surp_str = f"{'+' if surprise >= 0 else ''}{surprise:.1f}%" if isinstance(surprise, (int, float)) else str(surprise)
+            # Revenue indicator
+            rev_mark = ""
+            if item.get("rev_actual") and item.get("rev_estimate"):
+                rev_mark = " rev✓" if item.get("rev_beat") else " rev✗"
+            # Guidance indicator
+            guidance = item.get("guidance_signal", "")
+            guide_mark = ""
+            if "raised" in guidance:
+                guide_mark = " ↑"
+            elif "lowered" in guidance:
+                guide_mark = " ↓"
+            text += f"  {symbol:<6} {beat_status:<8} EPS {surp_str:>8}{rev_mark}{guide_mark}\n"
+
+    analyst_actions = data.get("analyst_actions", {})
+    if analyst_actions:
+        text += "\nANALYST ACTIONS (7d):\n"
+        for symbol in sorted(analyst_actions.keys()):
+            for a in analyst_actions[symbol][:2]:
+                analyst = a.get("analyst", "?")
+                action = a.get("action", "")
+                prior = a.get("prior_rating", "")
+                pt = a.get("price_target")
+                prior_pt = a.get("prior_target")
+                rating = f"{prior}→{action}" if prior else action
+                if pt and prior_pt:
+                    direction = "↑" if pt > prior_pt else "↓"
+                    text += f"  {symbol:<6} {analyst}: {rating} PT ${prior_pt:.0f}→${pt:.0f}{direction}\n"
+                elif pt:
+                    text += f"  {symbol:<6} {analyst}: {rating} PT ${pt:.0f}\n"
+                else:
+                    text += f"  {symbol:<6} {analyst}: {rating}\n"
 
     text += f"""
 ▸ NEWS SIGNAL

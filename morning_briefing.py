@@ -44,7 +44,11 @@ def _load_dotenv(path=None):
                 line = line.strip()
                 if line and not line.startswith("#") and "=" in line:
                     key, _, value = line.partition("=")
-                    os.environ.setdefault(key.strip(), value.strip())
+                    key = key.strip()
+                    value = value.strip().strip('"').strip("'")
+                    # Use direct assignment — setdefault won't overwrite empty
+                    # shell env vars (e.g., ANTHROPIC_API_KEY="" from Claude Code)
+                    os.environ[key] = value
 
 _load_dotenv()
 try:
@@ -71,6 +75,8 @@ except ImportError:
 # CONFIGURATION - Edit these or set as environment variables
 # ============================================================================
 
+EARNINGS_LOOKBACK_DAYS = 28  # 4 weeks to cover full earnings season
+
 CONFIG = {
     # API Keys
     "FINNHUB_API_KEY": os.getenv("FINNHUB_API_KEY", ""),
@@ -94,8 +100,8 @@ CONFIG = {
     "EMAIL_RECIPIENT": os.getenv("EMAIL_RECIPIENT", ""),
 
     # Holdings — combined personal (JVS) ∪ BCM portfolios
-    # Updated 2026-03-16 from SummPosn_Grp_JVS_Portfolio_031626.csv + BCM top holdings 030926.xlsx
-    # Personal: 58 stocks + 10 ETFs | BCM-only additions: 15 stocks + 2 ETFs | Combined: 73 stocks + 12 ETFs = 85 total
+    # Updated 2026-04-14 from SummPosn_Grp_JVS_Portfolio_031626.csv + BCM Top holdings 041326.xlsx
+    # Personal: 58 stocks + 10 ETFs | BCM-only additions: 16 stocks + 5 ETFs/funds | Combined: 74 stocks + 15 ETFs = 89 total
     "INDIVIDUAL_STOCKS": [
         # --- Both personal & BCM ---
         "AAPL", "ABNB", "AMAT", "AMZN", "BAC", "C", "CMCSA", "COF", "DE", "ELV",
@@ -107,14 +113,14 @@ CONFIG = {
         "ODD", "OUST", "PEYUF", "PLTR", "RIG", "RIO", "SNY", "SOFI", "TDW", "TSLA",
         "VGZ", "VWAPY", "WY", "ZETA",
         # --- BCM only (not in personal, but top holdings) ---
-        "BKR", "CHWY", "COST", "CTRA", "CVS", "DIS", "GOOGL", "GS", "INVH", "JNJ",
-        "JPM", "PFE", "SLB", "TROW", "UNP",
+        "BKR", "CHWY", "COST", "CTRA", "CVS", "DIS", "GOOGL", "GS", "IFF", "INVH",
+        "JNJ", "JPM", "PFE", "SLB", "TROW", "UNP",
     ],
     "ETFS": [
         # --- Personal ETFs ---
         "CSRE", "DFAS", "DFCF", "DFEM", "DFEV", "DVYE", "GDX", "GDXJ", "URNM", "VCRB",
-        # --- BCM ETFs ---
-        "VDE", "XLE",
+        # --- BCM ETFs/funds ---
+        "AKRE", "IBB", "VDE", "VGHAX", "XLE",
     ],
 
     # Social buzz threshold (% week-over-week engagement increase to flag)
@@ -125,6 +131,9 @@ CONFIG = {
     "GMAIL_CREDENTIALS_FILE": os.path.expanduser("~/Documents/Claude-Workspace/credentials/client_secret_942007569615-qa9bggt8p0rlkno9r0mmv138j31m0m60.apps.googleusercontent.com.json"),
     "GMAIL_TOKEN_FILE": os.path.expanduser("~/Documents/Claude-Workspace/credentials/gmail_token.json"),
     "VITAL_KNOWLEDGE_SENDER": "vitalknowledge",  # Partial match on sender (case-insensitive)
+
+    # Earnings history persistence (4-week rolling lookback)
+    "EARNINGS_HISTORY_FILE": os.path.join(os.path.dirname(os.path.abspath(__file__)), "earnings_history.json"),
 }
 
 # ============================================================================
@@ -303,15 +312,15 @@ def fetch_finnhub_earnings(api_key: str, tickers: set[str]) -> list[dict]:
 
 
 def fetch_earnings_scorecard(api_key: str, tickers: set[str]) -> list[dict]:
-    """Fetch past earnings (last 3 weeks) to show beat/miss status."""
+    """Fetch past earnings (last 4 weeks) to show beat/miss status."""
     today = datetime.now()
 
-    # Look back 3 weeks for recent earnings results
-    three_weeks_ago = today - timedelta(days=21)
+    # Look back 4 weeks for recent earnings results
+    lookback_start = today - timedelta(days=EARNINGS_LOOKBACK_DAYS)
 
     url = "https://finnhub.io/api/v1/calendar/earnings"
     params = {
-        "from": three_weeks_ago.strftime("%Y-%m-%d"),
+        "from": lookback_start.strftime("%Y-%m-%d"),
         "to": today.strftime("%Y-%m-%d"),
         "token": api_key
     }
@@ -570,13 +579,13 @@ def fetch_fmp_earnings_scorecard(api_key: str, tickers: set[str]) -> list[dict]:
     """Fetch earnings data from Financial Modeling Prep (stable API)."""
     scorecard = []
     today = datetime.now()
-    three_weeks_ago = today - timedelta(days=21)
+    lookback_start = today - timedelta(days=EARNINGS_LOOKBACK_DAYS)
 
     try:
         # Try new stable endpoint
         url = f"https://financialmodelingprep.com/stable/earning-calendar"
         params = {
-            "from": three_weeks_ago.strftime("%Y-%m-%d"),
+            "from": lookback_start.strftime("%Y-%m-%d"),
             "to": today.strftime("%Y-%m-%d"),
             "apikey": api_key
         }
@@ -638,7 +647,7 @@ def fetch_yfinance_earnings(tickers: set[str], existing_symbols: set[str]) -> li
     """
     scorecard = []
     today = datetime.now()
-    three_weeks_ago = today - timedelta(days=21)
+    lookback_start = today - timedelta(days=EARNINGS_LOOKBACK_DAYS)
     missing = tickers - existing_symbols
 
     if not missing:
@@ -659,7 +668,7 @@ def fetch_yfinance_earnings(tickers: set[str], existing_symbols: set[str]) -> li
 
             for idx, row in dates.iterrows():
                 date_str = idx.strftime("%Y-%m-%d") if hasattr(idx, 'strftime') else str(idx)[:10]
-                if date_str < three_weeks_ago.strftime("%Y-%m-%d") or date_str > today.strftime("%Y-%m-%d"):
+                if date_str < lookback_start.strftime("%Y-%m-%d") or date_str > today.strftime("%Y-%m-%d"):
                     continue
 
                 eps_actual = row.get("Reported EPS")
@@ -1067,7 +1076,7 @@ def fetch_yahoo_earnings(tickers: set[str]) -> list[dict]:
     """Fetch earnings data from Yahoo Finance as additional source."""
     scorecard = []
     today = datetime.now()
-    three_weeks_ago = today - timedelta(days=21)
+    lookback_start = today - timedelta(days=EARNINGS_LOOKBACK_DAYS)
     headers = {"User-Agent": "Mozilla/5.0"}
     
     for ticker in tickers:
@@ -1089,7 +1098,7 @@ def fetch_yahoo_earnings(tickers: set[str]) -> list[dict]:
                         report_date = quarter.get("quarterDate", {}).get("fmt", "")
                         
                         # Only include if reported this quarter
-                        if report_date and report_date >= three_weeks_ago.strftime("%Y-%m-%d"):
+                        if report_date and report_date >= lookback_start.strftime("%Y-%m-%d"):
                             eps_actual = quarter.get("epsActual", {}).get("raw")
                             eps_estimate = quarter.get("epsEstimate", {}).get("raw")
                             
@@ -1268,7 +1277,7 @@ def fetch_alpha_vantage_earnings(api_key: str, tickers: set[str]) -> list[dict]:
     """Fetch earnings data from Alpha Vantage (use sparingly - 25 calls/day limit)."""
     scorecard = []
     today = datetime.now()
-    three_weeks_ago = today - timedelta(days=21)
+    lookback_start = today - timedelta(days=EARNINGS_LOOKBACK_DAYS)
     
     # Limit to avoid hitting daily cap (500 calls/day on free tier, 25/min)
     tickers_to_check = list(tickers)[:20]
@@ -1295,7 +1304,7 @@ def fetch_alpha_vantage_earnings(api_key: str, tickers: set[str]) -> list[dict]:
                     report_date = latest.get("reportedDate", "")
                     
                     # Only include if reported this quarter
-                    if report_date and report_date >= three_weeks_ago.strftime("%Y-%m-%d"):
+                    if report_date and report_date >= lookback_start.strftime("%Y-%m-%d"):
                         eps_actual = latest.get("reportedEPS")
                         eps_estimate = latest.get("estimatedEPS")
                         
@@ -1332,7 +1341,7 @@ def fetch_individual_earnings(api_key: str, tickers: set[str], existing_symbols:
     """Fetch earnings for specific tickers not found in calendar data."""
     scorecard = []
     today = datetime.now()
-    three_weeks_ago = today - timedelta(days=21)
+    lookback_start = today - timedelta(days=EARNINGS_LOOKBACK_DAYS)
 
     missing_tickers = tickers - existing_symbols
 
@@ -1353,7 +1362,7 @@ def fetch_individual_earnings(api_key: str, tickers: set[str], existing_symbols:
                     item = data[0]
                     report_date = item.get("date", "")
 
-                    if report_date >= three_weeks_ago.strftime("%Y-%m-%d"):
+                    if report_date >= lookback_start.strftime("%Y-%m-%d"):
                         eps_actual = item.get("actualEarningResult") or item.get("eps")
                         eps_estimate = item.get("estimatedEarning") or item.get("epsEstimated")
                         rev_actual = item.get("actualRevenue") or item.get("revenue")
@@ -1659,6 +1668,169 @@ def merge_earnings_data(finnhub_data: list[dict], fmp_data: list[dict],
 
 
 # ============================================================================
+# EARNINGS HISTORY PERSISTENCE (4-week rolling lookback)
+# ============================================================================
+
+
+def load_earnings_history(filepath: str) -> dict:
+    """Load persistent earnings history from JSON file, pruning stale entries."""
+    try:
+        with open(filepath, "r") as f:
+            history = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError, IOError):
+        return {"last_updated": None, "entries": {}}
+
+    # Prune entries older than lookback window
+    cutoff = (datetime.now() - timedelta(days=EARNINGS_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    entries = history.get("entries", {})
+    pruned = {sym: e for sym, e in entries.items() if e.get("date", "") >= cutoff}
+    history["entries"] = pruned
+    return history
+
+
+def save_earnings_history(filepath: str, scorecard: list, history: dict) -> None:
+    """Merge fresh scorecard into history and persist to JSON."""
+    entries = history.get("entries", {})
+
+    # Fresh data wins for any symbol present in both
+    for item in scorecard:
+        sym = item["symbol"]
+        entry = {
+            "symbol": sym,
+            "date": item.get("date", ""),
+            "eps_actual": item.get("eps_actual"),
+            "eps_estimate": item.get("eps_estimate"),
+            "surprise_pct": item.get("surprise_pct"),
+            "beat": item.get("beat"),
+            "rev_actual": item.get("rev_actual"),
+            "rev_estimate": item.get("rev_estimate"),
+            "rev_beat": item.get("rev_beat"),
+            "rev_surprise_pct": item.get("rev_surprise_pct"),
+            "guidance_signal": item.get("guidance_signal", ""),
+            "source": item.get("source", "unknown"),
+        }
+        # Preserve first_seen from history if it exists
+        if sym in entries and "first_seen" in entries[sym]:
+            entry["first_seen"] = entries[sym]["first_seen"]
+        else:
+            entry["first_seen"] = datetime.now().strftime("%Y-%m-%d")
+        entries[sym] = entry
+
+    # Prune anything outside the lookback window
+    cutoff = (datetime.now() - timedelta(days=EARNINGS_LOOKBACK_DAYS)).strftime("%Y-%m-%d")
+    entries = {sym: e for sym, e in entries.items() if e.get("date", "") >= cutoff}
+
+    output = {
+        "last_updated": datetime.now().strftime("%Y-%m-%dT%H:%M:%S"),
+        "lookback_start": cutoff,
+        "entries": entries,
+    }
+
+    try:
+        with open(filepath, "w") as f:
+            json.dump(output, f, indent=2)
+    except IOError as e:
+        print(f"  Warning: could not save earnings history: {e}")
+
+
+def merge_with_history(scorecard: list, history: dict) -> list:
+    """Merge fresh scorecard with historical entries (history fills gaps, fresh wins)."""
+    # Build lookup of fresh results
+    fresh = {item["symbol"]: item for item in scorecard}
+
+    # Add historical entries not in fresh results
+    for sym, entry in history.get("entries", {}).items():
+        if sym not in fresh:
+            fresh[sym] = entry
+
+    # Sort by date descending
+    return sorted(fresh.values(), key=lambda x: x.get("date", ""), reverse=True)
+
+
+def fetch_forward_estimates(api_key: str, symbols: list) -> dict:
+    """Fetch next-quarter consensus estimates from FMP for companies that just reported."""
+    estimates = {}
+    if not api_key or not symbols:
+        return estimates
+
+    for symbol in symbols[:15]:
+        try:
+            url = "https://financialmodelingprep.com/stable/analyst-estimates"
+            params = {
+                "symbol": symbol,
+                "period": "quarter",
+                "limit": 2,
+                "apikey": api_key,
+            }
+            resp = requests.get(url, params=params, timeout=10)
+            if resp.status_code != 200:
+                continue
+
+            data = resp.json()
+            if not data or not isinstance(data, list):
+                continue
+
+            # First entry is the next quarter's consensus
+            est = data[0]
+            estimates[symbol] = {
+                "next_q_eps_est": est.get("estimatedEpsAvg"),
+                "next_q_rev_est": est.get("estimatedRevenueAvg"),
+                "num_analysts": est.get("numberAnalystEstimatedEps", est.get("numberAnalystsEstimatedEps")),
+            }
+
+            time.sleep(0.3)  # Rate limiting
+
+        except Exception as e:
+            print(f"    Forward estimates error for {symbol}: {e}")
+            continue
+
+    return estimates
+
+
+def fetch_analyst_actions(api_key: str, tickers: set) -> dict:
+    """Fetch recent analyst upgrades/downgrades/price target changes via yfinance.
+
+    Returns dict keyed by symbol with list of recent actions (last 7 days).
+    Each action: {analyst, action, rating, price_target, prior_target, date}
+    """
+    actions = {}
+    today = datetime.now()
+    week_ago = (today - timedelta(days=7)).strftime("%Y-%m-%d")
+
+    for symbol in sorted(tickers):
+        try:
+            t = yf.Ticker(symbol)
+            ud = t.upgrades_downgrades
+            if ud is None or ud.empty:
+                continue
+
+            # Filter to last 7 days
+            for grade_date, row in ud.iterrows():
+                date_str = str(grade_date)[:10]
+                if date_str < week_ago:
+                    break  # sorted newest first, so stop when older
+
+                action_entry = {
+                    "analyst": row.get("Firm", "Unknown"),
+                    "action": row.get("ToGrade", ""),
+                    "prior_rating": row.get("FromGrade", ""),
+                    "price_target": row.get("currentPriceTarget") if row.get("currentPriceTarget") and row.get("currentPriceTarget") > 0 else None,
+                    "prior_target": row.get("priorPriceTarget") if row.get("priorPriceTarget") and row.get("priorPriceTarget") > 0 else None,
+                    "date": date_str,
+                    "pt_action": row.get("priceTargetAction", ""),
+                }
+
+                if symbol not in actions:
+                    actions[symbol] = []
+                actions[symbol].append(action_entry)
+
+        except Exception:
+            continue
+
+    return actions
+
+
+# ============================================================================
 # AI ANALYSIS
 # ============================================================================
 
@@ -1814,9 +1986,87 @@ Based ONLY on facts clearly stated in the news headlines, in ONE brief sentence 
     return explanations
 
 
+def analyze_earnings_guidance(scorecard: list, forward_estimates: dict, api_key: str) -> dict:
+    """Analyze whether companies raised/lowered/maintained guidance after reporting.
+
+    Uses news headlines + forward estimate context to infer guidance direction.
+    Same pattern as explain_earnings_misses().
+    """
+    signals = {}
+    if not scorecard or not api_key:
+        return signals
+
+    try:
+        client = Anthropic(api_key=api_key)
+
+        for item in scorecard[:10]:
+            symbol = item["symbol"]
+            eps_actual = item.get("eps_actual", 0)
+            eps_estimate = item.get("eps_estimate", 0)
+            beat = item.get("beat", False)
+
+            # Get forward estimate context if available
+            fwd = forward_estimates.get(symbol, {})
+            fwd_eps = fwd.get("next_q_eps_est")
+            fwd_rev = fwd.get("next_q_rev_est")
+            fwd_context = ""
+            if fwd_eps:
+                fwd_context = f"\nNext quarter consensus: EPS ${fwd_eps:.2f}"
+                if fwd_rev:
+                    fwd_context += f", Revenue ${fwd_rev/1e9:.1f}B"
+
+            # Fetch recent news
+            news = fetch_ticker_news(symbol)
+            news_text = "\n".join([f"- {n['title']}" for n in news]) if news else "No recent news."
+
+            prompt = f"""{symbol} just reported earnings. EPS: ${eps_actual:.2f} vs ${eps_estimate:.2f} est ({'beat' if beat else 'miss'}).
+{fwd_context}
+
+Recent news headlines:
+{news_text}
+
+Based ONLY on the headlines, answer in 2-3 words max: did management RAISE guidance, LOWER guidance, or is guidance IN-LINE with expectations? If unclear from headlines, say UNCLEAR. Respond with ONLY one of: raised guidance / lowered outlook / guidance in-line / unclear"""
+
+            message = client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=30,
+                messages=[{"role": "user", "content": prompt}]
+            )
+
+            signal = message.content[0].text.strip().lower()
+            # Normalize to standard labels
+            if "raise" in signal:
+                signals[symbol] = "raised guidance"
+            elif "lower" in signal:
+                signals[symbol] = "lowered outlook"
+            elif "in-line" in signal or "inline" in signal:
+                signals[symbol] = "guidance in-line"
+            # Skip 'unclear' — don't add noise
+
+    except Exception as e:
+        print(f"Error analyzing guidance: {e}")
+
+    return signals
+
+
 # ============================================================================
 # FORMATTING
 # ============================================================================
+
+
+def _format_revenue(value) -> str:
+    """Format revenue as human-readable: $98.2B, $4.3B, $450M, etc."""
+    if value is None:
+        return "N/A"
+    if not isinstance(value, (int, float)):
+        return str(value)
+    abs_val = abs(value)
+    if abs_val >= 1e9:
+        return f"${value / 1e9:.1f}B"
+    elif abs_val >= 1e6:
+        return f"${value / 1e6:.0f}M"
+    else:
+        return f"${value:,.0f}"
 
 
 def _lunarcrush_signals(sentiment: int, trend: str, interactions_raw: int,
@@ -1921,7 +2171,8 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
                     social_alerts: list[dict], miss_explanations: dict, holdings_count: int,
                     market_snapshot: dict = None, premarket_movers: list[dict] = None,
                     rsi_alerts: list[dict] = None, vk_highlights: list[dict] = None,
-                    creator_signals: list[dict] = None) -> str:
+                    creator_signals: list[dict] = None,
+                    analyst_actions: dict = None) -> str:
     """Format the morning briefing with refined aesthetics."""
     now = datetime.now()
 
@@ -2048,9 +2299,9 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
 
     # Earnings Scorecard - Beats first (green), then Misses (red)
     if scorecard:
-        beats = [s for s in scorecard if s["beat"]]
-        misses = [s for s in scorecard if not s["beat"]]
-        lines.append(f"▸ EARNINGS SCORECARD  ({len(beats)} beat · {len(misses)} miss)")
+        beats = [s for s in scorecard if s.get("beat")]
+        misses = [s for s in scorecard if not s.get("beat")]
+        lines.append(f"▸ EARNINGS SCORECARD  ({len(beats)} beat · {len(misses)} miss · 4-wk)")
         lines.append("")
 
         # Show beats first with green indicator
@@ -2058,19 +2309,20 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
             lines.append("  BEATS")
             for item in beats[:8]:
                 symbol = item["symbol"]
-                actual = item["eps_actual"]
-                estimate = item["eps_estimate"]
-                surprise_pct = item["surprise_pct"]
-                # Add revenue indicator if available
-                rev_tag = ""
-                if item.get("rev_beat") is not None:
-                    if item["rev_beat"]:
-                        rev_tag = "  rev ✓"
-                    else:
-                        rev_pct = item.get("rev_surprise_pct", 0)
-                        rev_tag = f"  rev miss {rev_pct:.1f}%"
-                lines.append(f"  🟢 {symbol:<6} ${actual:.2f} vs ${estimate:.2f}  (+{surprise_pct:.1f}%){rev_tag}")
-                lines.append(f"         https://finance.yahoo.com/quote/{symbol}")
+                actual = item.get("eps_actual", 0)
+                estimate = item.get("eps_estimate", 0)
+                surprise_pct = item.get("surprise_pct", 0)
+                lines.append(f"  🟢 {symbol:<6} EPS ${actual:.2f} vs ${estimate:.2f} (+{surprise_pct:.1f}%)")
+                # Revenue sub-line
+                rev_actual = item.get("rev_actual")
+                rev_estimate = item.get("rev_estimate")
+                guidance = item.get("guidance_signal", "")
+                if rev_actual and rev_estimate:
+                    rev_mark = "✓" if item.get("rev_beat") else "✗"
+                    guidance_tag = f"  {guidance}" if guidance else ""
+                    lines.append(f"           Rev {_format_revenue(rev_actual)} vs {_format_revenue(rev_estimate)} {rev_mark}{guidance_tag}")
+                elif guidance:
+                    lines.append(f"           {guidance}")
             lines.append("")
 
         # Show misses with red indicator
@@ -2078,21 +2330,59 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
             lines.append("  MISSES")
             for item in misses[:8]:
                 symbol = item["symbol"]
-                actual = item["eps_actual"]
-                estimate = item["eps_estimate"]
-                surprise_pct = item["surprise_pct"]
-                # Add revenue indicator if available
-                rev_tag = ""
-                if item.get("rev_beat") is not None:
-                    if item["rev_beat"]:
-                        rev_tag = "  rev ✓"
-                    else:
-                        rev_pct = item.get("rev_surprise_pct", 0)
-                        rev_tag = f"  rev miss {rev_pct:.1f}%"
-                lines.append(f"  🔴 {symbol:<6} ${actual:.2f} vs ${estimate:.2f}  ({surprise_pct:.1f}%){rev_tag}")
+                actual = item.get("eps_actual", 0)
+                estimate = item.get("eps_estimate", 0)
+                surprise_pct = item.get("surprise_pct", 0)
+                lines.append(f"  🔴 {symbol:<6} EPS ${actual:.2f} vs ${estimate:.2f} ({surprise_pct:.1f}%)")
+                # Revenue sub-line
+                rev_actual = item.get("rev_actual")
+                rev_estimate = item.get("rev_estimate")
+                guidance = item.get("guidance_signal", "")
+                if rev_actual and rev_estimate:
+                    rev_mark = "✓" if item.get("rev_beat") else "✗"
+                    guidance_tag = f"  {guidance}" if guidance else ""
+                    lines.append(f"           Rev {_format_revenue(rev_actual)} vs {_format_revenue(rev_estimate)} {rev_mark}{guidance_tag}")
+                elif guidance:
+                    lines.append(f"           {guidance}")
                 if symbol in miss_explanations:
                     lines.append(f"      └─ {miss_explanations[symbol]}")
-                lines.append(f"         https://finance.yahoo.com/quote/{symbol}")
+            lines.append("")
+
+    # Analyst upgrades/downgrades/price target changes
+    # iMessage: only show material actions (rating changes or PT moves >5%)
+    if analyst_actions:
+        material = []
+        for symbol in sorted(analyst_actions.keys()):
+            for a in analyst_actions[symbol][:2]:
+                action = a.get("action", "")
+                prior_rating = a.get("prior_rating", "")
+                pt = a.get("price_target")
+                prior_pt = a.get("prior_target")
+                # Material = actual rating change, or PT move >10%, or new coverage
+                is_rating_change = prior_rating and action and prior_rating != action
+                is_big_pt_move = (pt and prior_pt and abs(pt - prior_pt) / prior_pt > 0.10)
+                is_new_coverage = not prior_rating and action
+                if is_rating_change or is_big_pt_move or is_new_coverage:
+                    material.append((symbol, a))
+        if material:
+            lines.append("▸ ANALYST ACTIONS (7d)")
+            lines.append("")
+            for symbol, a in material[:15]:  # Cap at 15 for iMessage
+                analyst = a.get("analyst", "?")
+                action = a.get("action", "")
+                pt = a.get("price_target")
+                prior_pt = a.get("prior_target")
+                prior_rating = a.get("prior_rating", "")
+                if pt and prior_pt:
+                    direction = "↑" if pt > prior_pt else "↓"
+                    lines.append(f"  {symbol:<6} {analyst}: {prior_rating}→{action}  PT ${prior_pt:.0f}→${pt:.0f} {direction}")
+                elif pt:
+                    lines.append(f"  {symbol:<6} {analyst}: {action}  PT ${pt:.0f}")
+                else:
+                    rating_change = f"{prior_rating}→{action}" if prior_rating else action
+                    lines.append(f"  {symbol:<6} {analyst}: {rating_change}")
+            if len(material) > 15:
+                lines.append(f"  ... +{len(material) - 15} more (see email)")
             lines.append("")
 
     # Upcoming Earnings (sorted: date, then pre-market before post-market)
@@ -2830,7 +3120,7 @@ def run_morning_briefing():
     rsi_alerts = fetch_rsi_alerts(CONFIG["ALPHA_VANTAGE_API_KEY"], CONFIG["INDIVIDUAL_STOCKS"])
     print(f"  Found {len(rsi_alerts)} stocks with RSI alerts")
 
-    print("\n[5/10] Fetching earnings scorecard (last 3 weeks) (Finnhub)...")
+    print("\n[5/10] Fetching earnings scorecard (last 4 weeks) (Finnhub)...")
     finnhub_scorecard = fetch_earnings_scorecard(CONFIG["FINNHUB_API_KEY"], ticker_set)
     print(f"  Found {len(finnhub_scorecard)} from Finnhub")
 
@@ -2854,11 +3144,34 @@ def run_morning_briefing():
 
     # Merge earnings data from all sources (FMP and Yahoo v10 skipped — endpoints dead)
     scorecard = merge_earnings_data(finnhub_scorecard, [], None, yf_scorecard, None, alpha_scorecard)
-    print(f"  Combined: {len(scorecard)} unique earnings results (3-week lookback)")
+    print(f"  Combined: {len(scorecard)} unique earnings results (4-week lookback)")
+
+    # 4-week earnings history: load previous, merge, save
+    print("\n[6c/10] Loading/saving 4-week earnings history...")
+    earnings_history = load_earnings_history(CONFIG["EARNINGS_HISTORY_FILE"])
+    scorecard = merge_with_history(scorecard, earnings_history)
+    print(f"  {len(scorecard)} total earnings results (with history)")
+
+    # Forward estimates — FMP analyst-estimates requires paid tier (402)
+    # Keeping the function for future use; skipping the call for now
+    forward_estimates = {}
+    # Uncomment when FMP plan supports it:
+    # print("\n[6d/10] Fetching forward estimates (FMP)...")
+    # reported_symbols = [s["symbol"] for s in scorecard]
+    # forward_estimates = fetch_forward_estimates(CONFIG["FMP_API_KEY"], reported_symbols)
+    # for entry in scorecard:
+    #     if entry["symbol"] in forward_estimates:
+    #         entry.update(forward_estimates[entry["symbol"]])
+    # print(f"  Forward estimates for {len(forward_estimates)} companies")
 
     print("\n[7/10] Fetching pre-market movers...")
     premarket_movers = fetch_premarket_movers(CONFIG["FMP_API_KEY"], all_tickers, threshold=3.0)
     print(f"  Found {len(premarket_movers)} holdings moving >3%")
+
+    print("\n[7b/10] Fetching analyst actions (yfinance)...")
+    analyst_actions = fetch_analyst_actions(None, ticker_set)
+    total_actions = sum(len(v) for v in analyst_actions.values())
+    print(f"  Found {total_actions} analyst actions across {len(analyst_actions)} tickers")
 
     # LunarCrush calls — now separated from Alpha Vantage by FMP/Finnhub/yfinance work
     print("\n[8/10] Checking social buzz (LunarCrush)...")
@@ -2886,9 +3199,19 @@ def run_morning_briefing():
     )
 
     print("\nAnalyzing earnings misses...")
-    misses = [s for s in scorecard if not s["beat"]]
+    misses = [s for s in scorecard if not s.get("beat")]
     miss_explanations = explain_earnings_misses(misses, CONFIG["ANTHROPIC_API_KEY"])
     print(f"  Generated explanations for {len(miss_explanations)} misses")
+
+    print("Analyzing earnings guidance signals...")
+    guidance_signals = analyze_earnings_guidance(scorecard, forward_estimates, CONFIG["ANTHROPIC_API_KEY"])
+    for entry in scorecard:
+        if entry["symbol"] in guidance_signals:
+            entry["guidance_signal"] = guidance_signals[entry["symbol"]]
+    print(f"  Guidance signals for {len(guidance_signals)} companies")
+
+    # Save enriched scorecard to history
+    save_earnings_history(CONFIG["EARNINGS_HISTORY_FILE"], scorecard, earnings_history)
 
     # ── v2 REDESIGN: AI-powered editorial brief ──────────────────────────
     print("\n[10/10] Generating AI intelligence brief...")
@@ -2905,6 +3228,7 @@ def run_morning_briefing():
         "miss_explanations": miss_explanations,
         "social_alerts": [],       # Social is in separate 6:20 AM brief
         "creator_signals": [],
+        "analyst_actions": analyst_actions,
     }
 
     try:
@@ -2923,7 +3247,8 @@ def run_morning_briefing():
         print(f"  ✗ AI brief failed: {e}")
         print("  Falling back to legacy formatter...")
         text_message = format_briefing(filtered_news, earnings, scorecard, [], miss_explanations,
-                                       len(all_tickers), market_snapshot, premarket_movers, rsi_alerts, vk_highlights)
+                                       len(all_tickers), market_snapshot, premarket_movers, rsi_alerts, vk_highlights,
+                                       analyst_actions=analyst_actions)
         html_email = None
 
     # Print to console
