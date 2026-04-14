@@ -1734,13 +1734,21 @@ def save_earnings_history(filepath: str, scorecard: list, history: dict) -> None
 
 
 def merge_with_history(scorecard: list, history: dict) -> list:
-    """Merge fresh scorecard with historical entries (history fills gaps, fresh wins)."""
+    """Merge fresh scorecard with historical entries.
+
+    Fresh API data wins UNLESS the history entry was manually corrected
+    (source='manual_correction'), in which case the correction is preserved.
+    """
     # Build lookup of fresh results
     fresh = {item["symbol"]: item for item in scorecard}
 
-    # Add historical entries not in fresh results
+    # Merge with historical entries
     for sym, entry in history.get("entries", {}).items():
         if sym not in fresh:
+            # Historical entry not in fresh — add it
+            fresh[sym] = entry
+        elif entry.get("source") == "manual_correction":
+            # Manual correction in history takes priority over stale API data
             fresh[sym] = entry
 
     # Sort by date descending
