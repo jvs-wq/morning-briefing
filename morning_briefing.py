@@ -2404,8 +2404,10 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
             hour = e.get("hour", "")
             timing = "pre" if hour == "bmo" else "post" if hour == "amc" else ""
             eps = e.get("eps_estimate")
-            eps_str = f"est ${eps:.2f}" if eps else ""
-            lines.append(f"  {symbol:<6} {date}  {timing:<4} {eps_str}")
+            eps_str = f"EPS ${eps:.2f}" if eps else ""
+            rev_est = e.get("revenue_estimate")
+            rev_str = f"  Rev {_format_revenue(rev_est)}" if rev_est else ""
+            lines.append(f"  {symbol:<6} {date}  {timing:<4} {eps_str}{rev_str}")
         lines.append("")
 
     # FYI - show more items with full text

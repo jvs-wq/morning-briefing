@@ -197,7 +197,9 @@ PRE-MARKET MOVERS (>3% or strategically important):
     payload += "\nEARNINGS CALENDAR (upcoming):\n"
     if earnings:
         for item in earnings[:10]:
-            payload += f"- {item.get('symbol', 'N/A')}: {item.get('date', 'N/A')} {item.get('hour', 'N/A')} | Est. EPS: {item.get('eps_estimate', 'N/A')}\n"
+            rev_est = item.get('revenue_estimate')
+            rev_tag = f" | Est. Rev: ${rev_est/1e9:.1f}B" if rev_est and isinstance(rev_est, (int, float)) and rev_est >= 1e9 else (f" | Est. Rev: ${rev_est/1e6:.0f}M" if rev_est and isinstance(rev_est, (int, float)) and rev_est >= 1e6 else "")
+            payload += f"- {item.get('symbol', 'N/A')}: {item.get('date', 'N/A')} {item.get('hour', 'N/A')} | Est. EPS: {item.get('eps_estimate', 'N/A')}{rev_tag}\n"
     else:
         payload += "- No upcoming earnings in next 5 days\n"
 
@@ -630,15 +632,17 @@ def _format_full_earnings_table(scorecard: list[dict[str, Any]], earnings: list[
     if earnings:
         html += '<h4 style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; color: #1a1a1a; margin: 24px 0 12px 0; text-transform: uppercase;">Upcoming Earnings Calendar</h4>'
         html += '<table width="100%" cellpadding="8" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; font-family: Arial, sans-serif; font-size: 12px;">'
-        html += '<tr style="background-color: #ebe7e1;"><td style="font-weight: 700;">Ticker</td><td>Date</td><td>Hour</td><td>Est. EPS</td></tr>'
+        html += '<tr style="background-color: #ebe7e1;"><td style="font-weight: 700;">Ticker</td><td>Date</td><td>Hour</td><td>Est. EPS</td><td>Est. Revenue</td></tr>'
 
         for item in earnings[:10]:
             symbol = item.get("symbol", "N/A")
             date = item.get("date", "N/A")
             hour = item.get("hour", "N/A")
             eps_est = item.get("eps_estimate", "N/A")
+            rev_est = item.get("revenue_estimate")
+            rev_str = _format_rev(rev_est) if rev_est else "—"
 
-            html += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="font-weight: 700;">{symbol}</td><td>{date}</td><td>{hour}</td><td>{eps_est}</td></tr>'
+            html += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="font-weight: 700;">{symbol}</td><td>{date}</td><td>{hour}</td><td>{eps_est}</td><td>{rev_str}</td></tr>'
 
         html += '</table>'
 
