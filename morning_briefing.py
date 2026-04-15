@@ -31,6 +31,7 @@ from morning_briefing_redesign import (
     generate_ai_morning_brief,
     format_morning_html,
     format_morning_text,
+    format_market_recap_html,
     send_html_email,
 )
 
@@ -355,6 +356,7 @@ def fetch_earnings_scorecard(api_key: str, tickers: set[str]) -> list[dict]:
                 scorecard.append({
                     "symbol": symbol,
                     "date": item.get("date", ""),
+                    "hour": item.get("hour", ""),  # bmo / amc / dmh
                     "eps_actual": eps_actual,
                     "eps_estimate": eps_estimate,
                     "surprise": surprise,
@@ -370,6 +372,78 @@ def fetch_earnings_scorecard(api_key: str, tickers: set[str]) -> list[dict]:
         return sorted(scorecard, key=lambda x: x["date"], reverse=True)
     except Exception as e:
         print(f"Error fetching earnings scorecard: {e}")
+        return []
+
+
+def fetch_todays_after_hours_earnings(api_key: str, tickers: set[str]) -> list[dict]:
+    """Fetch today's after-market-close (AMC) earnings for our holdings.
+
+    Returns BOTH reported and not-yet-reported AMC companies. If the recap runs
+    shortly after market close, most reporters haven't published yet — we still
+    surface them as 'pending' so the brief has forward-looking context.
+
+    Each dict includes:
+        reported (bool)  : True if Finnhub has actual EPS
+        beat     (bool|None)
+        eps_actual, eps_estimate, surprise_pct, rev_actual, rev_estimate, rev_beat
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    url = "https://finnhub.io/api/v1/calendar/earnings"
+    params = {"from": today, "to": today, "token": api_key}
+
+    try:
+        response = requests.get(url, params=params, timeout=60)
+        response.raise_for_status()
+        data = response.json()
+
+        results = []
+        for item in data.get("earningsCalendar", []):
+            symbol = item.get("symbol", "")
+            hour = (item.get("hour") or "").lower()
+
+            # Only today's after-market-close reporters among our holdings
+            if symbol not in tickers or hour != "amc":
+                continue
+
+            eps_actual = item.get("epsActual")
+            eps_estimate = item.get("epsEstimate")
+            rev_actual = item.get("revenueActual")
+            rev_estimate = item.get("revenueEstimate")
+
+            reported = eps_actual is not None
+            beat = None
+            surprise_pct = None
+            if reported and eps_estimate is not None:
+                beat = eps_actual >= eps_estimate
+                if eps_estimate != 0:
+                    surprise_pct = ((eps_actual - eps_estimate) / abs(eps_estimate)) * 100
+
+            rev_beat = None
+            if rev_actual is not None and rev_estimate is not None:
+                rev_beat = rev_actual >= rev_estimate
+
+            results.append({
+                "symbol": symbol,
+                "date": item.get("date", today),
+                "hour": "amc",
+                "reported": reported,
+                "eps_actual": eps_actual,
+                "eps_estimate": eps_estimate,
+                "beat": beat,
+                "surprise_pct": surprise_pct,
+                "rev_actual": rev_actual,
+                "rev_estimate": rev_estimate,
+                "rev_beat": rev_beat,
+                "quarter": item.get("quarter"),
+                "year": item.get("year"),
+            })
+
+        # Reported first (most interesting), then pending, alphabetical within
+        results.sort(key=lambda x: (not x["reported"], x["symbol"]))
+        return results
+    except Exception as e:
+        print(f"Error fetching today's after-hours earnings: {e}")
         return []
 
 
@@ -684,6 +758,12 @@ def fetch_yfinance_earnings(tickers: set[str], existing_symbols: set[str]) -> li
                 if math.isnan(eps_actual) or math.isnan(eps_estimate):
                     continue
 
+                # Coerce numpy scalars from pandas rows to Python-native types
+                # BEFORE any arithmetic or comparison, otherwise `beat` becomes
+                # numpy.bool_ which is not JSON serializable and breaks
+                # save_earnings_history.
+                eps_actual = float(eps_actual)
+                eps_estimate = float(eps_estimate)
                 surprise = eps_actual - eps_estimate
                 surprise_pct = (surprise / abs(eps_estimate) * 100) if eps_estimate != 0 else 0
 
@@ -694,7 +774,7 @@ def fetch_yfinance_earnings(tickers: set[str], existing_symbols: set[str]) -> li
                     "eps_estimate": round(eps_estimate, 2),
                     "surprise": round(surprise, 4),
                     "surprise_pct": round(surprise_pct, 1),
-                    "beat": eps_actual >= eps_estimate,
+                    "beat": bool(eps_actual >= eps_estimate),
                     "source": "yfinance"
                 })
                 print(f"    Found {ticker} via yfinance: eps={eps_actual:.2f} vs {eps_estimate:.2f}")
@@ -1688,6 +1768,39 @@ def load_earnings_history(filepath: str) -> dict:
     return history
 
 
+def _json_safe(value):
+    """Coerce any numpy/pandas scalar to a JSON-native Python type.
+
+    Belt-and-suspenders against numpy.bool_ / numpy.float64 / numpy.int64
+    leaking in from yfinance or pandas-backed fetchers. Returns value
+    unchanged if already native. Handles NaN by returning None.
+    """
+    if value is None:
+        return None
+    # Native bool must be checked before int (bool is a subclass of int in Python)
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float, str)):
+        # NaN check for floats (math.isnan only accepts real numbers)
+        if isinstance(value, float) and value != value:
+            return None
+        return value
+    # numpy / pandas scalar — cast via .item() if available, else best-effort
+    if hasattr(value, "item"):
+        try:
+            v = value.item()
+            if isinstance(v, float) and v != v:
+                return None
+            return v
+        except (ValueError, TypeError):
+            pass
+    # Last-resort fallback — stringify rather than crash serialization
+    try:
+        return float(value)
+    except (ValueError, TypeError):
+        return str(value)
+
+
 def save_earnings_history(filepath: str, scorecard: list, history: dict) -> None:
     """Merge fresh scorecard into history and persist to JSON."""
     entries = history.get("entries", {})
@@ -1698,14 +1811,14 @@ def save_earnings_history(filepath: str, scorecard: list, history: dict) -> None
         entry = {
             "symbol": sym,
             "date": item.get("date", ""),
-            "eps_actual": item.get("eps_actual"),
-            "eps_estimate": item.get("eps_estimate"),
-            "surprise_pct": item.get("surprise_pct"),
-            "beat": item.get("beat"),
-            "rev_actual": item.get("rev_actual"),
-            "rev_estimate": item.get("rev_estimate"),
-            "rev_beat": item.get("rev_beat"),
-            "rev_surprise_pct": item.get("rev_surprise_pct"),
+            "eps_actual": _json_safe(item.get("eps_actual")),
+            "eps_estimate": _json_safe(item.get("eps_estimate")),
+            "surprise_pct": _json_safe(item.get("surprise_pct")),
+            "beat": _json_safe(item.get("beat")),
+            "rev_actual": _json_safe(item.get("rev_actual")),
+            "rev_estimate": _json_safe(item.get("rev_estimate")),
+            "rev_beat": _json_safe(item.get("rev_beat")),
+            "rev_surprise_pct": _json_safe(item.get("rev_surprise_pct")),
             "guidance_signal": item.get("guidance_signal", ""),
             "source": item.get("source", "unknown"),
         }
@@ -2612,7 +2725,8 @@ def format_premarket_update(market_snapshot: dict, premarket_movers: list[dict],
 
 def format_market_recap(market_close: dict, portfolio_perf: list[dict],
                         filtered_news: list[dict], holdings_count: int,
-                        rsi_alerts: list[dict] = None) -> str:
+                        rsi_alerts: list[dict] = None,
+                        ah_earnings: list[dict] = None) -> str:
     """Format the afternoon market recap with refined aesthetics."""
     now = datetime.now()
     
@@ -2668,13 +2782,13 @@ def format_market_recap(market_close: dict, portfolio_perf: list[dict],
         # Sort by change percentage
         sorted_perf = sorted(portfolio_perf, key=lambda x: x["change_pct"], reverse=True)
         
-        gainers = [p for p in sorted_perf if p["change_pct"] > 0][:5]
-        losers = [p for p in sorted_perf if p["change_pct"] < 0][-5:]
+        gainers = [p for p in sorted_perf if p["change_pct"] > 0][:10]
+        losers = [p for p in sorted_perf if p["change_pct"] < 0][-10:]
         losers.reverse()  # Most negative first
-        
+
         # Top Gainers
         if gainers:
-            lines.append("▸ TOP GAINERS")
+            lines.append("▸ TOP 10 GAINERS")
             lines.append("")
             for p in gainers:
                 symbol = p["symbol"]
@@ -2682,10 +2796,10 @@ def format_market_recap(market_close: dict, portfolio_perf: list[dict],
                 change = p["change_pct"]
                 lines.append(f"  ▲ {symbol:<6} ${price:>8.2f}  +{change:.1f}%")
             lines.append("")
-        
+
         # Top Losers
         if losers:
-            lines.append("▸ TOP LOSERS")
+            lines.append("▸ TOP 10 LOSERS")
             lines.append("")
             for p in losers:
                 symbol = p["symbol"]
@@ -2730,6 +2844,39 @@ def format_market_recap(market_close: dict, portfolio_perf: list[dict],
                 price = p["price"]
                 year_low = p.get("year_low", price)
                 lines.append(f"  ⚠ {symbol:<6} ${price:>8.2f}  (52w: ${year_low:.2f})")
+            lines.append("")
+
+    # After-Hours Earnings (today's AMC reporters — reported and pending)
+    if ah_earnings:
+        reported = [e for e in ah_earnings if e.get("reported")]
+        pending = [e for e in ah_earnings if not e.get("reported")]
+
+        lines.append("▸ AFTER-HOURS EARNINGS")
+        lines.append("")
+
+        if reported:
+            for e in reported:
+                symbol = e["symbol"]
+                status = "BEAT" if e.get("beat") else "MISS"
+                marker = "✓" if e.get("beat") else "✗"
+                eps_a = e.get("eps_actual")
+                eps_e = e.get("eps_estimate")
+                surp = e.get("surprise_pct")
+
+                eps_str = ""
+                if isinstance(eps_a, (int, float)) and isinstance(eps_e, (int, float)):
+                    eps_str = f"EPS ${eps_a:.2f} / est ${eps_e:.2f}"
+                surp_str = f"  ({'+' if surp and surp >= 0 else ''}{surp:.1f}%)" if isinstance(surp, (int, float)) else ""
+                lines.append(f"  {marker} {symbol:<6} {status:<4}  {eps_str}{surp_str}")
+            lines.append("")
+
+        if pending:
+            lines.append("  Pending (not yet reported):")
+            for e in pending:
+                symbol = e["symbol"]
+                eps_e = e.get("eps_estimate")
+                est_str = f"est EPS ${eps_e:.2f}" if isinstance(eps_e, (int, float)) else "est EPS n/a"
+                lines.append(f"  ⋯ {symbol:<6}  {est_str}")
             lines.append("")
 
     # RSI Alerts (oversold stocks)
@@ -3308,45 +3455,71 @@ def run_market_recap():
     print(f"\nAnalyzing {len(all_tickers)} holdings...")
 
     # Fetch data
-    print("\n[1/5] Fetching market close data...")
+    print("\n[1/6] Fetching market close data...")
     market_close = fetch_market_close(CONFIG["FINNHUB_API_KEY"])
     sp = market_close.get("sp500")
     sp_chg = market_close.get("sp500_change")
     print(f"  S&P 500: {sp:,.2f} ({'+' if sp_chg >= 0 else ''}{sp_chg:.2f}%)" if sp else "  S&P 500: N/A")
 
-    print("\n[2/5] Fetching portfolio performance (incl. 52-week data)...")
+    print("\n[2/6] Fetching portfolio performance (incl. 52-week data)...")
     portfolio_perf = fetch_portfolio_performance(CONFIG["FMP_API_KEY"], all_tickers)
     highs_52w = [p for p in portfolio_perf if p.get("at_52w_high")]
     lows_52w = [p for p in portfolio_perf if p.get("at_52w_low")]
     print(f"  Got quotes for {len(portfolio_perf)} holdings")
     print(f"  52-week highs: {len(highs_52w)} · 52-week lows: {len(lows_52w)}")
 
-    print("\n[3/5] Fetching RSI alerts (Alpha Vantage)...")
+    print("\n[3/6] Fetching RSI alerts (Alpha Vantage)...")
     rsi_alerts = fetch_rsi_alerts(CONFIG["ALPHA_VANTAGE_API_KEY"], CONFIG["INDIVIDUAL_STOCKS"])
     print(f"  Found {len(rsi_alerts)} stocks with RSI alerts")
 
-    print("\n[4/5] Fetching afternoon news...")
+    print("\n[4/6] Fetching afternoon news...")
     news = fetch_yahoo_news(all_tickers)
     filtered_news = filter_news_with_ai(news, CONFIG["ANTHROPIC_API_KEY"]) if news else []
     print(f"  {len(filtered_news)} material news items")
 
-    print("\n[5/5] Generating recap...")
-    recap = format_market_recap(market_close, portfolio_perf, filtered_news, len(all_tickers), rsi_alerts)
+    print("\n[5/6] Fetching today's after-hours earnings (Finnhub)...")
+    ah_earnings = fetch_todays_after_hours_earnings(CONFIG["FINNHUB_API_KEY"], ticker_set)
+    reported_count = len([e for e in ah_earnings if e.get("reported")])
+    pending_count = len(ah_earnings) - reported_count
+    print(f"  {len(ah_earnings)} AMC reporters (holdings): {reported_count} reported · {pending_count} pending")
+
+    print("\n[6/6] Generating recap (text + HTML)...")
+    recap_text = format_market_recap(
+        market_close, portfolio_perf, filtered_news, len(all_tickers),
+        rsi_alerts, ah_earnings=ah_earnings,
+    )
+
+    try:
+        recap_html = format_market_recap_html({
+            "market_close": market_close,
+            "portfolio_perf": portfolio_perf,
+            "filtered_news": filtered_news,
+            "ah_earnings": ah_earnings,
+            "rsi_alerts": rsi_alerts,
+            "holdings_count": len(all_tickers),
+        })
+        print(f"  ✓ HTML recap: {len(recap_html):,} bytes")
+    except Exception as e:
+        print(f"  ✗ HTML recap failed: {e}")
+        recap_html = None
 
     # Print recap to console
     print("\n" + "=" * 50)
-    print(recap)
+    print(recap_text)
     print("=" * 50)
 
-    # Send via iMessage
+    # Send via iMessage (text)
     print(f"\nSending iMessage to {CONFIG['IMESSAGE_RECIPIENT']}...")
-    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], recap)
+    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], recap_text)
 
-    # Send via Email
+    # Send via Email (HTML if available, plain text fallback)
     print(f"Sending email to {CONFIG['EMAIL_RECIPIENT']}...")
     today = datetime.now().strftime("%B %d, %Y")
-    email_subject = f"Market Recap - {today}"
-    email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, recap)
+    email_subject = f"Market Recap \u2013 {today}"
+    if recap_html:
+        email_success = send_html_email(CONFIG["EMAIL_RECIPIENT"], email_subject, recap_html)
+    else:
+        email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, recap_text)
 
     if imessage_success and email_success:
         print("\n✓ Market recap delivered via iMessage and Email!")

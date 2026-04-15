@@ -718,6 +718,435 @@ def _format_full_news_table(news: list[dict[str, Any]]) -> str:
 
 
 # ============================================================================
+# 2b. HTML FORMATTING — MARKET RECAP (afternoon / post-close)
+# ============================================================================
+
+def format_market_recap_html(data: dict[str, Any]) -> str:
+    """
+    Format the afternoon market recap as a styled HTML email.
+
+    Same MoMA/Penguin aesthetic as format_morning_html: black header with red
+    accent, Georgia serif for prose, Arial for data tables, 640px single-column
+    table layout, warm paper background.
+
+    Expected keys in `data`:
+        market_close     : dict  (sp500, nasdaq, dow, vix, treasury_10y + *_change)
+        portfolio_perf   : list[dict]  (symbol, price, change_pct, year_high, year_low, at_52w_*)
+        filtered_news    : list[dict]  (ticker, title, summary, category, link)
+        ah_earnings      : list[dict]  (from fetch_todays_after_hours_earnings)
+        rsi_alerts       : list[dict]  (optional)
+        holdings_count   : int
+    """
+    market_close = data.get("market_close", {}) or {}
+    portfolio_perf = data.get("portfolio_perf", []) or []
+    filtered_news = data.get("filtered_news", []) or []
+    ah_earnings = data.get("ah_earnings", []) or []
+    rsi_alerts = data.get("rsi_alerts", []) or []
+    holdings_count = data.get("holdings_count", 0)
+
+    now = datetime.now()
+    date_str = now.strftime("%A, %B %d")
+    time_str = now.strftime("%I:%M %p PT").lstrip("0")
+
+    # ---- Section builders ----------------------------------------------------
+
+    def _index_row(label, value, change):
+        if value is None:
+            return ""
+        val_str = f"{value:,.2f}"
+        chg_html = ""
+        if change is not None:
+            sign = "+" if change >= 0 else ""
+            color = "#27ae60" if change >= 0 else "#c0392b"
+            arrow = "&#x25B2;" if change >= 0 else "&#x25BC;"
+            chg_html = f'<span style="color: {color}; font-weight: 600;">{arrow} {sign}{change:.2f}%</span>'
+        return f"""<tr style="border-bottom: 1px solid #e8e3de;">
+    <td style="padding: 10px;">{label}</td>
+    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{val_str}</td>
+    <td style="padding: 10px; text-align: right;">{chg_html}</td>
+</tr>"""
+
+    def _plain_row(label, value, suffix=""):
+        if value is None:
+            return ""
+        return f"""<tr style="border-bottom: 1px solid #e8e3de;">
+    <td style="padding: 10px;">{label}</td>
+    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{value:.2f}{suffix}</td>
+    <td style="padding: 10px;"></td>
+</tr>"""
+
+    close_rows = ""
+    close_rows += _index_row("S&amp;P 500", market_close.get("sp500"), market_close.get("sp500_change"))
+    close_rows += _index_row("NASDAQ", market_close.get("nasdaq"), market_close.get("nasdaq_change"))
+    close_rows += _index_row("Dow Jones", market_close.get("dow"), market_close.get("dow_change"))
+    close_rows += _plain_row("VIX", market_close.get("vix"))
+    close_rows += _plain_row("10-Year Yield", market_close.get("treasury_10y"), "%")
+
+    close_section = ""
+    if close_rows:
+        close_section = f"""
+<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
+1. MARKET CLOSE
+</h2>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="background-color: #ebe7e1;">
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Index</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Level</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Change</td>
+</tr>
+{close_rows}
+</table>
+"""
+
+    # ---- Top 10 gainers / losers --------------------------------------------
+
+    sorted_perf = sorted(portfolio_perf, key=lambda x: x.get("change_pct", 0), reverse=True)
+    gainers = [p for p in sorted_perf if p.get("change_pct", 0) > 0][:10]
+    losers_raw = [p for p in sorted_perf if p.get("change_pct", 0) < 0][-10:]
+    losers = list(reversed(losers_raw))  # most negative first
+
+    def _movers_table(rows, title, color):
+        if not rows:
+            return ""
+        body = ""
+        for p in rows:
+            symbol = p.get("symbol", "")
+            price = p.get("price", 0) or 0
+            chg = p.get("change_pct", 0) or 0
+            sign = "+" if chg >= 0 else ""
+            body += f"""<tr style="border-bottom: 1px solid #e8e3de;">
+    <td style="padding: 10px; font-weight: 700;">{symbol}</td>
+    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">${price:,.2f}</td>
+    <td style="padding: 10px; text-align: right; color: {color}; font-weight: 600;">{sign}{chg:.2f}%</td>
+</tr>"""
+        return f"""
+<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #1a1a1a; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">
+{title}
+</h3>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="background-color: #ebe7e1;">
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Price</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Change</td>
+</tr>
+{body}
+</table>
+"""
+
+    movers_section = ""
+    if gainers or losers:
+        movers_section = f"""
+<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
+2. PORTFOLIO MOVERS
+</h2>
+{_movers_table(gainers, "Top 10 Gainers", "#27ae60")}
+{_movers_table(losers, "Top 10 Losers", "#c0392b")}
+"""
+
+    # ---- Portfolio summary ---------------------------------------------------
+
+    summary_section = ""
+    if portfolio_perf:
+        avg_change = sum(p.get("change_pct", 0) or 0 for p in portfolio_perf) / len(portfolio_perf)
+        up_count = len([p for p in portfolio_perf if (p.get("change_pct") or 0) > 0])
+        down_count = len([p for p in portfolio_perf if (p.get("change_pct") or 0) < 0])
+        avg_sign = "+" if avg_change >= 0 else ""
+        avg_color = "#27ae60" if avg_change >= 0 else "#c0392b"
+        summary_section = f"""
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="border-bottom: 1px solid #e8e3de;">
+    <td style="padding: 10px;">Average move</td>
+    <td style="padding: 10px; text-align: right; color: {avg_color}; font-weight: 600;">{avg_sign}{avg_change:.2f}%</td>
+</tr>
+<tr style="border-bottom: 1px solid #e8e3de;">
+    <td style="padding: 10px;">Advancers</td>
+    <td style="padding: 10px; text-align: right; font-weight: 600;">{up_count}</td>
+</tr>
+<tr>
+    <td style="padding: 10px;">Decliners</td>
+    <td style="padding: 10px; text-align: right; font-weight: 600;">{down_count}</td>
+</tr>
+</table>
+"""
+
+    # ---- 52-week extremes ----------------------------------------------------
+
+    highs_52w = [p for p in portfolio_perf if p.get("at_52w_high")]
+    lows_52w = [p for p in portfolio_perf if p.get("at_52w_low")]
+
+    def _52w_table(rows, label, marker, color):
+        if not rows:
+            return ""
+        body = ""
+        for p in rows:
+            symbol = p.get("symbol", "")
+            price = p.get("price", 0) or 0
+            extreme = p.get("year_high") if "High" in label else p.get("year_low")
+            ext_str = f"${extreme:,.2f}" if extreme else "—"
+            body += f"""<tr style="border-bottom: 1px solid #e8e3de;">
+    <td style="padding: 10px; font-weight: 700;">{marker} {symbol}</td>
+    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">${price:,.2f}</td>
+    <td style="padding: 10px; text-align: right; color: #999; font-variant-numeric: tabular-nums;">{ext_str}</td>
+</tr>"""
+        return f"""
+<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: {color}; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">
+{label}
+</h3>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="background-color: #ebe7e1;">
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Price</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">52-Week Level</td>
+</tr>
+{body}
+</table>
+"""
+
+    extremes_section = ""
+    if highs_52w or lows_52w:
+        extremes_section = f"""
+<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
+3. 52-WEEK EXTREMES
+</h2>
+{_52w_table(highs_52w, "52-Week Highs", "&#x2605;", "#27ae60")}
+{_52w_table(lows_52w, "52-Week Lows", "&#x26A0;", "#c0392b")}
+"""
+
+    # ---- After-hours earnings ------------------------------------------------
+
+    ah_section = ""
+    if ah_earnings:
+        reported = [e for e in ah_earnings if e.get("reported")]
+        pending = [e for e in ah_earnings if not e.get("reported")]
+
+        reported_rows = ""
+        for e in reported:
+            sym = e.get("symbol", "")
+            beat = e.get("beat")
+            status_txt = "BEAT" if beat else "MISS"
+            status_color = "#27ae60" if beat else "#c0392b"
+            eps_a = e.get("eps_actual")
+            eps_e = e.get("eps_estimate")
+            eps_str = f"${eps_a:.2f} / ${eps_e:.2f}" if isinstance(eps_a, (int, float)) and isinstance(eps_e, (int, float)) else "—"
+            surp = e.get("surprise_pct")
+            if isinstance(surp, (int, float)):
+                surp_sign = "+" if surp >= 0 else ""
+                surp_color = "#27ae60" if surp >= 0 else "#c0392b"
+                surp_html = f'<span style="color: {surp_color}; font-weight: 600;">{surp_sign}{surp:.1f}%</span>'
+            else:
+                surp_html = "—"
+            rev_a = _format_rev(e.get("rev_actual"))
+            rev_e = _format_rev(e.get("rev_estimate"))
+            rev_str = f"{rev_a} / {rev_e}" if rev_a and rev_e else "—"
+
+            reported_rows += f"""<tr style="border-bottom: 1px solid #e8e3de;">
+    <td style="padding: 10px; font-weight: 700;">{sym}</td>
+    <td style="padding: 10px; text-align: center; color: {status_color}; font-weight: 600;">{status_txt}</td>
+    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{eps_str}</td>
+    <td style="padding: 10px; text-align: right;">{surp_html}</td>
+    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rev_str}</td>
+</tr>"""
+
+        reported_block = ""
+        if reported_rows:
+            reported_block = f"""
+<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #1a1a1a; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">
+Reported After Close
+</h3>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="background-color: #ebe7e1;">
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: center;">Result</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">EPS Act/Est</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Surprise</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Revenue Act/Est</td>
+</tr>
+{reported_rows}
+</table>
+"""
+
+        pending_block = ""
+        if pending:
+            pending_rows = ""
+            for e in pending:
+                sym = e.get("symbol", "")
+                eps_e = e.get("eps_estimate")
+                est_str = f"${eps_e:.2f}" if isinstance(eps_e, (int, float)) else "n/a"
+                rev_e = _format_rev(e.get("rev_estimate")) or "—"
+                pending_rows += f"""<tr style="border-bottom: 1px solid #e8e3de;">
+    <td style="padding: 10px; font-weight: 700;">{sym}</td>
+    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{est_str}</td>
+    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rev_e}</td>
+</tr>"""
+            pending_block = f"""
+<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #999; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">
+Pending (Scheduled After Close, Not Yet Reported)
+</h3>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="background-color: #ebe7e1;">
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Est. EPS</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Est. Revenue</td>
+</tr>
+{pending_rows}
+</table>
+"""
+
+        ah_section = f"""
+<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
+4. AFTER-HOURS EARNINGS
+</h2>
+{reported_block}
+{pending_block}
+"""
+
+    # ---- News signal ---------------------------------------------------------
+
+    news_section = ""
+    important = [n for n in filtered_news if n.get("category") in ("URGENT", "IMPORTANT")]
+    if important:
+        news_items = ""
+        for n in important[:10]:
+            ticker = n.get("ticker", "—")
+            title = n.get("title", "")
+            summary = n.get("summary", "") or ""
+            link = n.get("link", "#")
+            category = n.get("category", "")
+            news_items += f"""
+<div style="margin-bottom: 18px; padding: 14px 16px; background-color: #f9f7f5; border-left: 3px solid #c0392b;">
+    <div style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;">
+        [{ticker}] &middot; {category}
+    </div>
+    <div style="font-family: Georgia, serif; font-size: 14px; color: #1a1a1a; line-height: 1.5; margin-bottom: 6px;">
+        {title}
+    </div>
+    <div style="font-family: Georgia, serif; font-size: 13px; color: #555; line-height: 1.55; margin-bottom: 10px;">
+        {summary}
+    </div>
+    <a href="{link}" style="font-family: Arial, sans-serif; font-size: 11px; color: #c0392b; text-decoration: none; font-weight: 600;">Read the story &rarr;</a>
+</div>
+"""
+        news_section = f"""
+<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
+5. NEWS ON HOLDINGS
+</h2>
+{news_items}
+"""
+
+    # ---- RSI (optional, small) -----------------------------------------------
+
+    rsi_section = ""
+    if rsi_alerts:
+        rsi_rows = ""
+        for a in rsi_alerts[:10]:
+            sym = a.get("symbol", "")
+            rsi = a.get("current_rsi", 0) or 0
+            min_rsi = a.get("min_rsi_52w", 0) or 0
+            flags = []
+            if a.get("is_oversold"):
+                flags.append("oversold")
+            if a.get("is_52w_low"):
+                flags.append("52w RSI low")
+            flag_str = " &middot; ".join(flags)
+            rsi_rows += f"""<tr style="border-bottom: 1px solid #e8e3de;">
+    <td style="padding: 10px; font-weight: 700;">{sym}</td>
+    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rsi:.1f}</td>
+    <td style="padding: 10px; text-align: right; color: #999; font-variant-numeric: tabular-nums;">{min_rsi:.1f}</td>
+    <td style="padding: 10px; color: #c0392b; font-size: 12px;">{flag_str}</td>
+</tr>"""
+        rsi_section = f"""
+<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
+6. RSI WATCH
+</h2>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="background-color: #ebe7e1;">
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">RSI</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">52w Min</td>
+    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Flag</td>
+</tr>
+{rsi_rows}
+</table>
+"""
+
+    # ---- Assemble document ---------------------------------------------------
+
+    html = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Market Recap</title>
+</head>
+<body style="margin: 0; padding: 0; background-color: #f5f0eb; font-family: Georgia, serif; color: #1a1a1a; line-height: 1.6;">
+
+<!-- HEADER BANNER -->
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f0eb;">
+<tr>
+<td style="padding: 0;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #1a1a1a; border-top: 3px solid #c0392b;">
+<tr>
+<td style="padding: 32px 40px 24px 40px;">
+    <div style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 600; letter-spacing: 2px; color: #999; text-transform: uppercase; margin-bottom: 8px;">
+        Afternoon Intelligence
+    </div>
+    <h1 style="font-family: Georgia, serif; font-size: 32px; font-weight: 400; color: #ffffff; margin: 0 0 8px 0; line-height: 1.2;">
+        Market Recap
+    </h1>
+    <div style="font-family: Arial, sans-serif; font-size: 13px; color: #cccccc; margin: 0;">
+        {date_str}
+    </div>
+</td>
+</tr>
+</table>
+</td>
+</tr>
+</table>
+
+<!-- CONTENT -->
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f5f0eb;">
+<tr>
+<td align="center" style="padding: 40px 20px;">
+
+<table width="640" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border: 1px solid #e8e3de;">
+<tr>
+<td style="padding: 40px;">
+
+{close_section}
+
+{movers_section}
+
+{summary_section}
+
+{extremes_section}
+
+{ah_section}
+
+{news_section}
+
+{rsi_section}
+
+<!-- FOOTER -->
+<div style="margin-top: 40px; padding-top: 24px; border-top: 1px solid #e8e3de; font-family: Arial, sans-serif; font-size: 12px; color: #999; line-height: 1.6;">
+    <div style="margin-bottom: 12px;">{holdings_count} holdings &middot; {time_str}</div>
+    <div style="color: #bbb;">Market recap complete. Next update: 5:00 AM PT (Morning Brief)</div>
+</div>
+
+</td>
+</tr>
+</table>
+
+</td>
+</tr>
+</table>
+
+</body>
+</html>
+"""
+    return html
+
+
+# ============================================================================
 # 3. PLAIN TEXT FORMATTING FOR iMESSAGE
 # ============================================================================
 
