@@ -32,6 +32,8 @@ from morning_briefing_redesign import (
     format_morning_html,
     format_morning_text,
     format_market_recap_html,
+    generate_ai_recap_brief,
+    format_recap_text,
     send_html_email,
 )
 
@@ -1150,6 +1152,186 @@ def fetch_portfolio_performance(api_key: str, tickers: list[str]) -> list[dict]:
                 continue
 
     return performance
+
+
+# ============================================================================
+# DUAL-SOURCE PRICE VERIFICATION (for Market Recap accuracy)
+# ============================================================================
+#
+# The recap relies on accurate closing prices and daily % change. Primary source
+# is yfinance (already fetched in portfolio_perf). Verification cross-checks
+# each holding against Finnhub's /quote endpoint and flags material drift so
+# we surface data-quality issues in the brief rather than silently reporting
+# incorrect numbers.
+#
+# Thresholds (DRIFT_TOLERANCE_PCT / MATERIAL_DRIFT_PCT) are tuned for post-close
+# regular-hours comparison — intra-day ticks between sources are expected, but
+# after the close both sources should agree on the official settlement price
+# within ~0.10%.
+
+DRIFT_TOLERANCE_PCT = 0.10      # Anything within this is "consensus"
+MATERIAL_DRIFT_PCT = 0.50       # Anything beyond this surfaces in the brief
+
+def verify_portfolio_closes(portfolio_perf: list[dict], finnhub_key: str) -> dict:
+    """
+    Cross-check each holding's close price against Finnhub as a second source.
+
+    Enriches each entry in `portfolio_perf` in-place with:
+      - verified_source: "consensus" | "drift" | "yfinance_only"
+      - drift_pct: float | None  (|yf - fh| / fh * 100, absolute value)
+      - drift_direction: "yf_high" | "yf_low" | None
+      - finnhub_close: float | None
+      - finnhub_change_pct: float | None  (Finnhub's own % change for the day)
+
+    Also returns a summary counts dict for footer reporting:
+      {checked, consensus, drift, material_drift, missing, flagged_symbols}
+
+    Behavior:
+      - No-op if `finnhub_key` is empty (returns zeroed counts).
+      - Rate-limited to ~55 calls/min (Finnhub free tier is 60/min) via 1.1s sleep.
+      - Finnhub free tier does NOT cover many ETFs/foreign ADRs — those rows
+        quietly fall back to "yfinance_only" without being counted as drift.
+      - Prefers yfinance price for display (already in the perf dict), but the
+        drift flag is what drives the "Data Quality" note in the HTML email.
+    """
+    counts = {
+        "checked": 0,
+        "consensus": 0,
+        "drift": 0,
+        "material_drift": 0,
+        "missing": 0,
+        "flagged_symbols": [],  # list of (symbol, drift_pct, yf_price, fh_price)
+    }
+
+    if not finnhub_key:
+        for p in portfolio_perf:
+            p.setdefault("verified_source", "yfinance_only")
+            p.setdefault("drift_pct", None)
+            p.setdefault("drift_direction", None)
+            p.setdefault("finnhub_close", None)
+            p.setdefault("finnhub_change_pct", None)
+        return counts
+
+    session = requests.Session()
+    for p in portfolio_perf:
+        symbol = p.get("symbol")
+        yf_price = p.get("price")
+        if not symbol or not isinstance(yf_price, (int, float)) or yf_price <= 0:
+            p["verified_source"] = "yfinance_only"
+            p["drift_pct"] = None
+            p["drift_direction"] = None
+            p["finnhub_close"] = None
+            p["finnhub_change_pct"] = None
+            counts["missing"] += 1
+            continue
+
+        counts["checked"] += 1
+        fh_close = None
+        fh_change_pct = None
+        try:
+            url = f"https://finnhub.io/api/v1/quote?symbol={symbol}&token={finnhub_key}"
+            resp = session.get(url, timeout=8)
+            if resp.status_code == 200:
+                data = resp.json()
+                fh_close = data.get("c")
+                fh_change_pct = data.get("dp")
+                # Finnhub returns c=0 for symbols it doesn't cover
+                if not fh_close or fh_close <= 0:
+                    fh_close = None
+                    fh_change_pct = None
+        except Exception:
+            pass
+
+        if fh_close is None:
+            p["verified_source"] = "yfinance_only"
+            p["drift_pct"] = None
+            p["drift_direction"] = None
+            p["finnhub_close"] = None
+            p["finnhub_change_pct"] = None
+            counts["missing"] += 1
+        else:
+            drift = abs(fh_close - yf_price) / fh_close * 100
+            direction = "yf_high" if yf_price > fh_close else ("yf_low" if yf_price < fh_close else None)
+            p["finnhub_close"] = float(fh_close)
+            p["finnhub_change_pct"] = float(fh_change_pct) if isinstance(fh_change_pct, (int, float)) else None
+            p["drift_pct"] = float(drift)
+            p["drift_direction"] = direction
+            if drift <= DRIFT_TOLERANCE_PCT:
+                p["verified_source"] = "consensus"
+                counts["consensus"] += 1
+            else:
+                p["verified_source"] = "drift"
+                counts["drift"] += 1
+                if drift >= MATERIAL_DRIFT_PCT:
+                    counts["material_drift"] += 1
+                    counts["flagged_symbols"].append(
+                        (symbol, float(drift), float(yf_price), float(fh_close))
+                    )
+
+        # Respect Finnhub free-tier rate limit (60/min)
+        time.sleep(1.1)
+
+    return counts
+
+
+def verify_market_close_indices(market_close: dict, finnhub_key: str) -> dict:
+    """
+    Cross-check the major indices in `market_close` using ETF proxies on Finnhub.
+    Finnhub free tier doesn't cover ^GSPC / ^IXIC / ^DJI directly, so we use
+    SPY / QQQ / DIA as proxies — price levels differ, but daily % change should
+    track the underlying index within ~0.05% on a normal session.
+
+    Enriches market_close in-place:
+      - {key}_verified_source  ("consensus" | "drift" | "yfinance_only")
+      - {key}_drift_pct        (float | None)
+      - {key}_finnhub_change   (float | None)
+
+    Returns: {"checked": N, "drift": M, "flagged": [(key, drift_pct), ...]}
+    """
+    counts = {"checked": 0, "drift": 0, "flagged": []}
+    if not finnhub_key:
+        return counts
+
+    proxies = [
+        ("sp500", "SPY"),
+        ("nasdaq", "QQQ"),
+        ("dow", "DIA"),
+    ]
+    session = requests.Session()
+    for key, proxy_symbol in proxies:
+        yahoo_change = market_close.get(f"{key}_change")
+        if yahoo_change is None:
+            market_close[f"{key}_verified_source"] = "yfinance_only"
+            market_close[f"{key}_drift_pct"] = None
+            continue
+        try:
+            url = f"https://finnhub.io/api/v1/quote?symbol={proxy_symbol}&token={finnhub_key}"
+            resp = session.get(url, timeout=8)
+            if resp.status_code == 200:
+                fh_change = resp.json().get("dp")
+                if isinstance(fh_change, (int, float)):
+                    counts["checked"] += 1
+                    drift = abs(yahoo_change - fh_change)
+                    market_close[f"{key}_drift_pct"] = float(drift)
+                    market_close[f"{key}_finnhub_change"] = float(fh_change)
+                    if drift <= DRIFT_TOLERANCE_PCT:
+                        market_close[f"{key}_verified_source"] = "consensus"
+                    else:
+                        market_close[f"{key}_verified_source"] = "drift"
+                        counts["drift"] += 1
+                        counts["flagged"].append((key, float(drift)))
+                else:
+                    market_close[f"{key}_verified_source"] = "yfinance_only"
+                    market_close[f"{key}_drift_pct"] = None
+            else:
+                market_close[f"{key}_verified_source"] = "yfinance_only"
+                market_close[f"{key}_drift_pct"] = None
+        except Exception:
+            market_close[f"{key}_verified_source"] = "yfinance_only"
+            market_close[f"{key}_drift_pct"] = None
+        time.sleep(1.1)
+
+    return counts
 
 
 def fetch_yahoo_earnings(tickers: set[str]) -> list[dict]:
@@ -3442,9 +3624,9 @@ def run_morning_briefing():
 
 
 def run_market_recap():
-    """Run the afternoon market recap workflow."""
+    """Run the afternoon market recap workflow (v2 — AI editorial + verified prices)."""
     print("\n" + "=" * 50)
-    print("Market Recap")
+    print("Market Recap v2 (editorial + dual-source price verification)")
     print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     print("=" * 50)
 
@@ -3455,49 +3637,89 @@ def run_market_recap():
     print(f"\nAnalyzing {len(all_tickers)} holdings...")
 
     # Fetch data
-    print("\n[1/6] Fetching market close data...")
+    print("\n[1/8] Fetching market close data (Yahoo)...")
     market_close = fetch_market_close(CONFIG["FINNHUB_API_KEY"])
     sp = market_close.get("sp500")
     sp_chg = market_close.get("sp500_change")
     print(f"  S&P 500: {sp:,.2f} ({'+' if sp_chg >= 0 else ''}{sp_chg:.2f}%)" if sp else "  S&P 500: N/A")
 
-    print("\n[2/6] Fetching portfolio performance (incl. 52-week data)...")
+    print("\n[2/8] Fetching portfolio performance (incl. 52-week data)...")
     portfolio_perf = fetch_portfolio_performance(CONFIG["FMP_API_KEY"], all_tickers)
     highs_52w = [p for p in portfolio_perf if p.get("at_52w_high")]
     lows_52w = [p for p in portfolio_perf if p.get("at_52w_low")]
     print(f"  Got quotes for {len(portfolio_perf)} holdings")
     print(f"  52-week highs: {len(highs_52w)} · 52-week lows: {len(lows_52w)}")
 
-    print("\n[3/6] Fetching RSI alerts (Alpha Vantage)...")
+    # --- NEW: dual-source price verification (Finnhub as second source) ---
+    print(f"\n[3/8] Cross-checking prices with Finnhub (~{len(portfolio_perf)}s rate-limited)...")
+    dq_counts = verify_portfolio_closes(portfolio_perf, CONFIG["FINNHUB_API_KEY"])
+    idx_dq = verify_market_close_indices(market_close, CONFIG["FINNHUB_API_KEY"])
+    print(f"  Holdings: {dq_counts['checked']} checked · "
+          f"{dq_counts['consensus']} consensus · "
+          f"{dq_counts['drift']} drift>{DRIFT_TOLERANCE_PCT:.2f}% · "
+          f"{dq_counts['material_drift']} material>{MATERIAL_DRIFT_PCT:.2f}% · "
+          f"{dq_counts['missing']} Finnhub-unavailable")
+    if dq_counts.get("flagged_symbols"):
+        print("  Materially drifted holdings:")
+        for sym, d, yf_p, fh_p in dq_counts["flagged_symbols"][:8]:
+            print(f"    {sym:<6}  yfinance ${yf_p:.2f}  vs  Finnhub ${fh_p:.2f}  ({d:.2f}% drift)")
+    print(f"  Indices:  {idx_dq['checked']} checked · {idx_dq['drift']} drift")
+
+    print("\n[4/8] Fetching RSI alerts (Alpha Vantage)...")
     rsi_alerts = fetch_rsi_alerts(CONFIG["ALPHA_VANTAGE_API_KEY"], CONFIG["INDIVIDUAL_STOCKS"])
     print(f"  Found {len(rsi_alerts)} stocks with RSI alerts")
 
-    print("\n[4/6] Fetching afternoon news...")
+    print("\n[5/8] Fetching afternoon news...")
     news = fetch_yahoo_news(all_tickers)
     filtered_news = filter_news_with_ai(news, CONFIG["ANTHROPIC_API_KEY"]) if news else []
     print(f"  {len(filtered_news)} material news items")
 
-    print("\n[5/6] Fetching today's after-hours earnings (Finnhub)...")
+    print("\n[6/8] Fetching today's after-hours earnings (Finnhub)...")
     ah_earnings = fetch_todays_after_hours_earnings(CONFIG["FINNHUB_API_KEY"], ticker_set)
     reported_count = len([e for e in ah_earnings if e.get("reported")])
     pending_count = len(ah_earnings) - reported_count
     print(f"  {len(ah_earnings)} AMC reporters (holdings): {reported_count} reported · {pending_count} pending")
 
-    print("\n[6/6] Generating recap (text + HTML)...")
-    recap_text = format_market_recap(
-        market_close, portfolio_perf, filtered_news, len(all_tickers),
-        rsi_alerts, ah_earnings=ah_earnings,
-    )
+    # Bundle data for AI + formatters
+    recap_data = {
+        "market_close": market_close,
+        "portfolio_perf": portfolio_perf,
+        "filtered_news": filtered_news,
+        "ah_earnings": ah_earnings,
+        "rsi_alerts": rsi_alerts,
+        "data_quality": dq_counts,
+        "holdings_count": len(all_tickers),
+    }
+
+    # --- NEW: AI editorial brief ---
+    print("\n[7/8] Generating AI editorial recap brief...")
+    ai_brief = None
+    try:
+        ai_brief = generate_ai_recap_brief(recap_data, CONFIG["ANTHROPIC_API_KEY"])
+        print("  ✓ AI brief generated")
+    except Exception as e:
+        print(f"  ✗ AI brief failed: {e}")
+        print("  Continuing with data-only rendering (legacy text fallback)")
+
+    print("\n[8/8] Formatting recap (text + HTML)...")
+    if ai_brief:
+        try:
+            recap_text = format_recap_text(ai_brief, recap_data)
+            print(f"  ✓ Plain text (v2): {len(recap_text):,} chars")
+        except Exception as e:
+            print(f"  ✗ v2 text failed: {e} — falling back to legacy text")
+            recap_text = format_market_recap(
+                market_close, portfolio_perf, filtered_news, len(all_tickers),
+                rsi_alerts, ah_earnings=ah_earnings,
+            )
+    else:
+        recap_text = format_market_recap(
+            market_close, portfolio_perf, filtered_news, len(all_tickers),
+            rsi_alerts, ah_earnings=ah_earnings,
+        )
 
     try:
-        recap_html = format_market_recap_html({
-            "market_close": market_close,
-            "portfolio_perf": portfolio_perf,
-            "filtered_news": filtered_news,
-            "ah_earnings": ah_earnings,
-            "rsi_alerts": rsi_alerts,
-            "holdings_count": len(all_tickers),
-        })
+        recap_html = format_market_recap_html(recap_data, ai_brief=ai_brief)
         print(f"  ✓ HTML recap: {len(recap_html):,} bytes")
     except Exception as e:
         print(f"  ✗ HTML recap failed: {e}")

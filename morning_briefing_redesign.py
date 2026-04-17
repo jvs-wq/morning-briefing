@@ -262,6 +262,283 @@ def _fallback_brief(data: dict[str, Any]) -> dict[str, str]:
 
 
 # ============================================================================
+# 1b. AI BRIEF GENERATION — MARKET RECAP (post-close)
+# ============================================================================
+
+RECAP_SYSTEM_PROMPT = """You are the senior portfolio analyst for a concentrated, high-conviction investment firm with approximately $900 million in AUM. You write the end-of-day intelligence brief that the CEO and investment team read after the close, before anything else. Your single job is to turn the day's tape into actionable post-close intelligence — what happened, what it means for the portfolio, and what to watch into tomorrow.
+
+PORTFOLIO CONTEXT & PHILOSOPHY:
+- PLTR (Palantir) is the anchor position (~30% of portfolio), a core strategic holding
+- The firm runs deeply concentrated positions (not diversified); thesis quality and moat strength matter far more than sector balance
+- Investment conviction centers on: monopolistic businesses with pricing power, long-term competitive moats, founder-aligned incentive structures, and secular growth tailwinds
+- The CEO's operating principle: "Never be surprised by material events." Your job is to surface the signals that matter before consensus does
+- Priority holdings: PLTR, NVDA, TSLA, META, AMZN, GOOGL, AMD, SOFI, UBER, MSFT, AAPL, JPM, COST, ABNB, AFRM, HIMS, NU, ASML
+
+POST-CLOSE WRITING DISCIPLINE:
+- The morning brief sets the day's hypothesis; the recap grades it. Start with what the tape confirmed, contradicted, or left ambiguous versus the morning thesis.
+- Lead with the single most important post-close signal. If an anchor position moved >3% on news, that's the lead. If a string of earnings revealed a cycle inflection, that's the lead. If the day was noise, say so.
+- Be direct and opinionated. Hedge only when genuine uncertainty exists. Use "is," "signals," "suggests" — not "may," "might," "could."
+- Cross-reference today's moves with the book: "AMD finished up 4.1% on no news — sympathy rally from NVDA's China commentary, thesis-positive but momentum-driven not fundamental." "JPM closed red despite beating because the market punished NIM guidance — watch for sector follow-through tomorrow."
+- Name the post-close trade setup when you see one: "This is a classic buy-the-dip setup into tomorrow's CPI print." "Oversold bounce candidate — RSI 28 and priced for recession that isn't coming."
+- For after-hours earnings reporters: if reported, grade the print (real beat vs. noise beat). If pending, frame what matters most in the release.
+- Use concrete numbers. "PLTR closed at $178.40, +2.1% on volume 1.4x avg" not "PLTR finished up nicely."
+- Connect to portfolio mechanics: does today validate existing positioning, or signal thesis drift?
+- Maximum 700 words across all sections.
+
+DATA-QUALITY AWARENESS:
+- If the data bundle indicates price drift flags between sources (yfinance vs Finnhub disagreement >0.10%), mention which holdings had drift and which source you are trusting. Do NOT fabricate precision you don't have.
+- If a holding's close price and daily change are both flagged with drift, treat the direction of the move as reliable but caveat the magnitude.
+
+OUTPUT STRUCTURE (return as valid JSON with these exact keys):
+{
+  "closing_pulse": "1-3 paragraph lead. THE most important post-close signal today. Answer: what happened, what it means for THIS portfolio, what changed vs. the morning brief thesis. This is the section the CEO reads in 30 seconds.",
+  "macro_read": "2-3 sentences interpreting the day's macro backdrop: indices (direction + magnitude + context), bonds, VIX behavior. What the market was pricing. 'Equities melted up with VIX bleeding to 14.2 while 10Y sold off 6bps — risk-on AND growth repricing, consistent with a cooling-inflation regime.' Not just raw numbers.",
+  "portfolio_movers": "Editorial read of today's top gainers and top losers in the book. For the top 3 gainers AND top 3 losers: explain WHY (earnings, sector rotation, news, macro spillover, idiosyncratic). Flag whether each move is signal or noise. Group by theme if patterns exist — 'Three of the four losers today were financials reacting to JPM's NIM commentary — sector rotation, not name-specific concerns.'",
+  "after_hours_watch": "Synthesis of today's after-hours earnings reporters (from our holdings). If ANY reporters delivered, grade the print: real beat vs. mechanical beat, guidance direction, stock reaction in AH. For pending reporters, name the single most important thing to watch when the print drops. 'NFLX reports AH — Street $4.52 EPS but the real signal is subscriber net-adds guidance for Q2.'",
+  "news_signal": "The 2-4 genuinely material news items that broke today. Explain why each matters for the portfolio into tomorrow — not just 'this is important news' but 'this affects PLTR because of Y and repositions Z for tomorrow.'",
+  "tomorrow_setup": "2-4 specific things to watch tomorrow: earnings pre-market, key levels/support, macro prints, Fed speakers, sector rotation to fade or press. Be specific: 'TSLA reports AH Wednesday — Street $0.39 EPS but robotaxi commentary is the real tell' not 'TSLA earnings Wednesday.' Include cross-asset signals (rates, FX, commodities) that will move the portfolio at tomorrow's open."
+}
+
+CRITICAL NOTES:
+- This is the POST-CLOSE brief (2:00 PM PT / 5:00 PM ET). The morning brief ran at 5:00 AM. Reference the morning thesis when today's tape confirmed or broke it.
+- Social media intelligence is handled in a separate brief. Do NOT force social data here.
+- Your output is the CEO's last market input before dinner. Make every word count."""
+
+
+def generate_ai_recap_brief(data: dict[str, Any], api_key: str) -> dict[str, str]:
+    """
+    Generate a post-close editorial intelligence brief using Claude.
+
+    Expected keys in `data`:
+        market_close       : dict  (sp500, nasdaq, dow, vix, treasury_10y + *_change + *_verified_source)
+        portfolio_perf     : list[dict]  (symbol, price, change_pct, verified_source, drift_pct, ...)
+        filtered_news      : list[dict]  (ticker, title, summary, category, link)
+        ah_earnings        : list[dict]  (reported + pending AMC)
+        rsi_alerts         : list[dict]
+        data_quality       : dict  (counts from verify_portfolio_closes)
+        holdings_count     : int
+
+    Returns dict with keys:
+        closing_pulse, macro_read, portfolio_movers,
+        after_hours_watch, news_signal, tomorrow_setup
+    """
+    client = Anthropic(api_key=api_key)
+    payload = _build_recap_ai_payload(data)
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=4096,
+            system=RECAP_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": payload}],
+        )
+        response_text = message.content[0].text
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            brief_dict = json.loads(json_match.group())
+            required_keys = [
+                "closing_pulse",
+                "macro_read",
+                "portfolio_movers",
+                "after_hours_watch",
+                "news_signal",
+                "tomorrow_setup",
+            ]
+            for key in required_keys:
+                if key not in brief_dict:
+                    brief_dict[key] = ""
+            return brief_dict
+        print("ERROR: Could not parse JSON from AI recap response")
+        return _fallback_recap_brief(data)
+    except Exception as e:
+        print(f"ERROR in AI recap generation: {e}")
+        return _fallback_recap_brief(data)
+
+
+def _build_recap_ai_payload(data: dict[str, Any]) -> str:
+    """Construct detailed text payload for Claude from structured post-close data."""
+    market_close = data.get("market_close", {}) or {}
+    portfolio_perf = data.get("portfolio_perf", []) or []
+    filtered_news = data.get("filtered_news", []) or []
+    ah_earnings = data.get("ah_earnings", []) or []
+    rsi_alerts = data.get("rsi_alerts", []) or []
+    data_quality = data.get("data_quality", {}) or {}
+
+    # Market close block
+    mc_lines = []
+    fields = [
+        ("S&P 500", "sp500", "sp500_change"),
+        ("NASDAQ", "nasdaq", "nasdaq_change"),
+        ("Dow Jones", "dow", "dow_change"),
+        ("VIX", "vix", None),
+        ("10Y Treasury Yield", "treasury_10y", None),
+    ]
+    for label, val_key, chg_key in fields:
+        val = market_close.get(val_key)
+        if val is None:
+            continue
+        chg = market_close.get(chg_key) if chg_key else None
+        drift_note = ""
+        vs = market_close.get(f"{val_key}_verified_source")
+        if vs == "drift":
+            d = market_close.get(f"{val_key}_drift_pct")
+            drift_note = f" [DRIFT {d:.2f}pp vs Finnhub]" if d else " [DRIFT]"
+        if chg is not None:
+            mc_lines.append(f"- {label}: {val:,.2f} ({'+' if chg >= 0 else ''}{chg:.2f}%){drift_note}")
+        else:
+            mc_lines.append(f"- {label}: {val:,.2f}{drift_note}")
+    mc_block = "\n".join(mc_lines) if mc_lines else "- Market close data unavailable"
+
+    # Top gainers / losers with verification
+    sorted_perf = sorted(portfolio_perf, key=lambda x: x.get("change_pct", 0) or 0, reverse=True)
+    top_gainers = [p for p in sorted_perf if (p.get("change_pct") or 0) > 0][:8]
+    top_losers_raw = [p for p in sorted_perf if (p.get("change_pct") or 0) < 0][-8:]
+    top_losers = list(reversed(top_losers_raw))
+
+    def _fmt_mover(p):
+        s = p.get("symbol", "?")
+        price = p.get("price")
+        chg = p.get("change_pct")
+        price_str = f"${price:.2f}" if isinstance(price, (int, float)) else "?"
+        chg_str = f"{'+' if isinstance(chg,(int,float)) and chg>=0 else ''}{chg:.2f}%" if isinstance(chg,(int,float)) else "?"
+        drift_tag = ""
+        if p.get("verified_source") == "drift" and p.get("drift_pct"):
+            drift_tag = f" [DRIFT {p['drift_pct']:.2f}%]"
+        elif p.get("verified_source") == "yfinance_only":
+            drift_tag = " [single-source]"
+        return f"- {s}: {price_str} ({chg_str}){drift_tag}"
+
+    gainers_block = "\n".join(_fmt_mover(p) for p in top_gainers) if top_gainers else "- None"
+    losers_block = "\n".join(_fmt_mover(p) for p in top_losers) if top_losers else "- None"
+
+    # Summary stats
+    up = len([p for p in portfolio_perf if (p.get("change_pct") or 0) > 0])
+    down = len([p for p in portfolio_perf if (p.get("change_pct") or 0) < 0])
+    avg = sum((p.get("change_pct") or 0) for p in portfolio_perf) / len(portfolio_perf) if portfolio_perf else 0
+
+    # After-hours earnings
+    ah_lines = []
+    reported = [e for e in ah_earnings if e.get("reported")]
+    pending = [e for e in ah_earnings if not e.get("reported")]
+    if reported:
+        ah_lines.append("Reported after close:")
+        for e in reported:
+            beat_tag = "BEAT" if e.get("beat") else "MISS"
+            eps_a = e.get("eps_actual")
+            eps_e = e.get("eps_estimate")
+            surp = e.get("surprise_pct")
+            eps_str = f"${eps_a:.2f} vs ${eps_e:.2f}" if isinstance(eps_a, (int, float)) and isinstance(eps_e, (int, float)) else "—"
+            surp_str = f" ({'+' if isinstance(surp,(int,float)) and surp>=0 else ''}{surp:.1f}%)" if isinstance(surp, (int, float)) else ""
+            ah_lines.append(f"- {e.get('symbol')}: {beat_tag} | EPS {eps_str}{surp_str}")
+    if pending:
+        ah_lines.append("Pending (scheduled AMC, not yet reported):")
+        for e in pending:
+            eps_e = e.get("eps_estimate")
+            est_str = f"est EPS ${eps_e:.2f}" if isinstance(eps_e, (int, float)) else "est EPS n/a"
+            ah_lines.append(f"- {e.get('symbol')}: {est_str}")
+    ah_block = "\n".join(ah_lines) if ah_lines else "- No after-hours reporters today"
+
+    # RSI
+    rsi_block = ""
+    if rsi_alerts:
+        rsi_lines = []
+        for a in rsi_alerts[:8]:
+            flags = []
+            if a.get("is_oversold"):
+                flags.append("oversold")
+            if a.get("is_52w_low"):
+                flags.append("52w RSI low")
+            rsi_lines.append(f"- {a.get('symbol')}: RSI {a.get('current_rsi', 0):.1f} ({' · '.join(flags) if flags else 'flat'})")
+        rsi_block = "\n".join(rsi_lines)
+
+    # News
+    news_lines = []
+    important = [n for n in filtered_news if n.get("category") in ("URGENT", "IMPORTANT")]
+    for item in important[:8]:
+        news_lines.append(f"- [{item.get('ticker', '?')}] {item.get('title', '')[:140]} ({item.get('category', '')})")
+        summary = item.get('summary', '')
+        if summary:
+            news_lines.append(f"  Summary: {summary[:200]}")
+    news_block = "\n".join(news_lines) if news_lines else "- No material news today"
+
+    # Data quality summary
+    dq_line = ""
+    if data_quality:
+        dq_parts = []
+        if data_quality.get("checked", 0) > 0:
+            dq_parts.append(f"checked={data_quality['checked']}")
+            dq_parts.append(f"consensus={data_quality.get('consensus', 0)}")
+            dq_parts.append(f"drift>{DRIFT_TOLERANCE_PCT}%={data_quality.get('drift', 0)}")
+            dq_parts.append(f"material(>{MATERIAL_DRIFT_PCT}%)={data_quality.get('material_drift', 0)}")
+        if dq_parts:
+            dq_line = f"\nPRICE VERIFICATION (yfinance vs Finnhub cross-check): {' · '.join(dq_parts)}\n"
+        flagged = data_quality.get("flagged_symbols") or []
+        if flagged:
+            dq_line += "Materially drifted holdings:\n"
+            for sym, drift, yf_p, fh_p in flagged[:8]:
+                dq_line += f"- {sym}: yfinance ${yf_p:.2f} vs Finnhub ${fh_p:.2f} ({drift:.2f}% drift)\n"
+
+    payload = f"""MARKET CLOSE (today, {datetime.now().strftime('%A %b %d')}):
+{mc_block}
+
+PORTFOLIO — TOP GAINERS:
+{gainers_block}
+
+PORTFOLIO — TOP LOSERS:
+{losers_block}
+
+PORTFOLIO SUMMARY:
+- Holdings with positive return today: {up}
+- Holdings with negative return today: {down}
+- Average move: {'+' if avg >= 0 else ''}{avg:.2f}%
+
+AFTER-HOURS EARNINGS:
+{ah_block}
+
+RSI EXTREMES (oversold/52w low):
+{rsi_block if rsi_block else '- None today'}
+
+MATERIAL NEWS (filtered for portfolio relevance):
+{news_block}
+{dq_line}
+BRIEFING CONTEXT:
+- This is the post-close intelligence brief (2:00 PM PT / 5:00 PM ET)
+- Morning brief fired at 5:00 AM today with that day's hypothesis — use it implicitly: did the tape confirm or break it?
+- CEO priority: actionable post-close signal, not noise. Grade the day. Frame tomorrow.
+"""
+    return payload
+
+
+def _fallback_recap_brief(data: dict[str, Any]) -> dict[str, str]:
+    """Fallback structure if AI recap generation fails. Keeps HTML rendering safe."""
+    market_close = data.get("market_close", {}) or {}
+    portfolio_perf = data.get("portfolio_perf", []) or []
+    sp_chg = market_close.get("sp500_change")
+    nq_chg = market_close.get("nasdaq_change")
+    up = len([p for p in portfolio_perf if (p.get("change_pct") or 0) > 0])
+    down = len([p for p in portfolio_perf if (p.get("change_pct") or 0) < 0])
+
+    return {
+        "closing_pulse": f"Market closed with S&P {sp_chg if sp_chg is not None else 'n/a'}% and NASDAQ {nq_chg if nq_chg is not None else 'n/a'}%. See detailed data below — AI editorial generation was unavailable for this run.",
+        "macro_read": "See index levels in the Market Close table below.",
+        "portfolio_movers": f"{up} holdings advanced, {down} declined today. See Portfolio Movers tables below for the full top 10 gainers and top 10 losers.",
+        "after_hours_watch": "See After-Hours Earnings section for today's AMC reporters.",
+        "news_signal": "See News on Holdings section.",
+        "tomorrow_setup": "Monitor pre-market movers and earnings pre-reports for tomorrow's session.",
+    }
+
+
+# Need DRIFT_TOLERANCE_PCT / MATERIAL_DRIFT_PCT for the AI payload — import lazily
+# to avoid circular imports. These are defined in morning_briefing.py as the
+# verification thresholds.
+try:
+    from morning_briefing import DRIFT_TOLERANCE_PCT, MATERIAL_DRIFT_PCT
+except Exception:
+    DRIFT_TOLERANCE_PCT = 0.10
+    MATERIAL_DRIFT_PCT = 0.50
+
+
+# ============================================================================
 # 2. HTML EMAIL FORMATTING
 # ============================================================================
 
@@ -721,20 +998,35 @@ def _format_full_news_table(news: list[dict[str, Any]]) -> str:
 # 2b. HTML FORMATTING — MARKET RECAP (afternoon / post-close)
 # ============================================================================
 
-def format_market_recap_html(data: dict[str, Any]) -> str:
+def format_market_recap_html(data, ai_brief=None):
     """
     Format the afternoon market recap as a styled HTML email.
 
-    Same MoMA/Penguin aesthetic as format_morning_html: black header with red
-    accent, Georgia serif for prose, Arial for data tables, 640px single-column
+    Same MoMA/Penguin Books aesthetic as format_morning_html: black header with
+    red accent, Georgia serif for prose, Arial for data tables, 640px single-column
     table layout, warm paper background.
 
+    When `ai_brief` is provided (preferred), the brief's editorial sections are
+    woven into the page in parallel to format_morning_html:
+      1. CLOSING PULSE      (editorial)
+      2. MACRO READ         (editorial) + MARKET CLOSE table
+      3. PORTFOLIO MOVERS   (editorial) + top 10 gainers/losers + summary
+      4. AFTER-HOURS WATCH  (editorial) + reported/pending tables
+      5. NEWS SIGNAL        (editorial) + news items
+      6. TOMORROW'S SETUP   (editorial)
+    Followed by an appendix with 52-Week Extremes, RSI Watch, and a Data Quality
+    note when the verify_portfolio_closes cross-check flagged material drift.
+
+    When `ai_brief` is None the function still renders cleanly with data tables
+    only (backward-compatible with pre-v2 callers).
+
     Expected keys in `data`:
-        market_close     : dict  (sp500, nasdaq, dow, vix, treasury_10y + *_change)
-        portfolio_perf   : list[dict]  (symbol, price, change_pct, year_high, year_low, at_52w_*)
-        filtered_news    : list[dict]  (ticker, title, summary, category, link)
-        ah_earnings      : list[dict]  (from fetch_todays_after_hours_earnings)
+        market_close     : dict
+        portfolio_perf   : list[dict]
+        filtered_news    : list[dict]
+        ah_earnings      : list[dict]
         rsi_alerts       : list[dict]  (optional)
+        data_quality     : dict        (optional — from verify_portfolio_closes)
         holdings_count   : int
     """
     market_close = data.get("market_close", {}) or {}
@@ -742,15 +1034,38 @@ def format_market_recap_html(data: dict[str, Any]) -> str:
     filtered_news = data.get("filtered_news", []) or []
     ah_earnings = data.get("ah_earnings", []) or []
     rsi_alerts = data.get("rsi_alerts", []) or []
+    data_quality = data.get("data_quality", {}) or {}
     holdings_count = data.get("holdings_count", 0)
+    ai = ai_brief or {}
 
     now = datetime.now()
     date_str = now.strftime("%A, %B %d")
     time_str = now.strftime("%I:%M %p PT").lstrip("0")
 
-    # ---- Section builders ----------------------------------------------------
+    def _section_header(num, title):
+        return (
+            f'<h2 style="font-family: Arial, sans-serif; font-size: 14px; '
+            f'font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; '
+            f'padding-bottom: 8px; border-bottom: 1px solid #c0392b;">'
+            f'{num}. {title}</h2>'
+        )
 
-    def _index_row(label, value, change):
+    def _editorial_prose(text, margin_bottom=32):
+        if not text:
+            return ""
+        return (
+            f'<div style="font-family: Georgia, serif; font-size: 15px; '
+            f'color: #1a1a1a; margin-bottom: {margin_bottom}px; line-height: 1.7;">'
+            f'{text}</div>'
+        )
+
+    # ---- 1. CLOSING PULSE (AI editorial only) -------------------------------
+    section_1 = ""
+    if ai.get("closing_pulse"):
+        section_1 = _section_header(1, "CLOSING PULSE") + _editorial_prose(ai["closing_pulse"])
+
+    # ---- 2. MACRO READ + MARKET CLOSE table ---------------------------------
+    def _index_row(label, value, change, verified_source=None, drift_pct=None):
         if value is None:
             return ""
         val_str = f"{value:,.2f}"
@@ -759,51 +1074,45 @@ def format_market_recap_html(data: dict[str, Any]) -> str:
             sign = "+" if change >= 0 else ""
             color = "#27ae60" if change >= 0 else "#c0392b"
             arrow = "&#x25B2;" if change >= 0 else "&#x25BC;"
-            chg_html = f'<span style="color: {color}; font-weight: 600;">{arrow} {sign}{change:.2f}%</span>'
-        return f"""<tr style="border-bottom: 1px solid #e8e3de;">
-    <td style="padding: 10px;">{label}</td>
-    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{val_str}</td>
-    <td style="padding: 10px; text-align: right;">{chg_html}</td>
-</tr>"""
+            drift_tag = ""
+            if verified_source == "drift" and drift_pct is not None:
+                drift_tag = f' <span title="Drift vs Finnhub" style="font-size:10px; color:#b7950b; margin-left:4px;">&#x26A0; drift {drift_pct:.2f}pp</span>'
+            chg_html = f'<span style="color: {color}; font-weight: 600;">{arrow} {sign}{change:.2f}%</span>{drift_tag}'
+        return f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px;">{label}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{val_str}</td><td style="padding: 10px; text-align: right;">{chg_html}</td></tr>'
 
     def _plain_row(label, value, suffix=""):
         if value is None:
             return ""
-        return f"""<tr style="border-bottom: 1px solid #e8e3de;">
-    <td style="padding: 10px;">{label}</td>
-    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{value:.2f}{suffix}</td>
-    <td style="padding: 10px;"></td>
-</tr>"""
+        return f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px;">{label}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{value:.2f}{suffix}</td><td style="padding: 10px;"></td></tr>'
 
     close_rows = ""
-    close_rows += _index_row("S&amp;P 500", market_close.get("sp500"), market_close.get("sp500_change"))
-    close_rows += _index_row("NASDAQ", market_close.get("nasdaq"), market_close.get("nasdaq_change"))
-    close_rows += _index_row("Dow Jones", market_close.get("dow"), market_close.get("dow_change"))
+    close_rows += _index_row("S&amp;P 500", market_close.get("sp500"), market_close.get("sp500_change"),
+                             market_close.get("sp500_verified_source"), market_close.get("sp500_drift_pct"))
+    close_rows += _index_row("NASDAQ", market_close.get("nasdaq"), market_close.get("nasdaq_change"),
+                             market_close.get("nasdaq_verified_source"), market_close.get("nasdaq_drift_pct"))
+    close_rows += _index_row("Dow Jones", market_close.get("dow"), market_close.get("dow_change"),
+                             market_close.get("dow_verified_source"), market_close.get("dow_drift_pct"))
     close_rows += _plain_row("VIX", market_close.get("vix"))
     close_rows += _plain_row("10-Year Yield", market_close.get("treasury_10y"), "%")
 
-    close_section = ""
+    close_table = ""
     if close_rows:
-        close_section = f"""
-<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
-1. MARKET CLOSE
-</h2>
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Arial, sans-serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;">
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Index</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Level</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Change</td>
-</tr>
-{close_rows}
-</table>
-"""
+        close_table = f'''<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Index</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Level</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Change</td></tr>
+{close_rows}</table>'''
 
-    # ---- Top 10 gainers / losers --------------------------------------------
+    section_2 = ""
+    if ai.get("macro_read") or close_table:
+        section_2 = _section_header(2, "MACRO READ")
+        if ai.get("macro_read"):
+            section_2 += _editorial_prose(ai["macro_read"], margin_bottom=24)
+        section_2 += close_table
 
-    sorted_perf = sorted(portfolio_perf, key=lambda x: x.get("change_pct", 0), reverse=True)
-    gainers = [p for p in sorted_perf if p.get("change_pct", 0) > 0][:10]
-    losers_raw = [p for p in sorted_perf if p.get("change_pct", 0) < 0][-10:]
-    losers = list(reversed(losers_raw))  # most negative first
+    # ---- 3. PORTFOLIO MOVERS (editorial + tables) ---------------------------
+    sorted_perf = sorted(portfolio_perf, key=lambda x: x.get("change_pct", 0) or 0, reverse=True)
+    gainers = [p for p in sorted_perf if (p.get("change_pct") or 0) > 0][:10]
+    losers_raw = [p for p in sorted_perf if (p.get("change_pct") or 0) < 0][-10:]
+    losers = list(reversed(losers_raw))
 
     def _movers_table(rows, title, color):
         if not rows:
@@ -814,63 +1123,131 @@ def format_market_recap_html(data: dict[str, Any]) -> str:
             price = p.get("price", 0) or 0
             chg = p.get("change_pct", 0) or 0
             sign = "+" if chg >= 0 else ""
-            body += f"""<tr style="border-bottom: 1px solid #e8e3de;">
-    <td style="padding: 10px; font-weight: 700;">{symbol}</td>
-    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">${price:,.2f}</td>
-    <td style="padding: 10px; text-align: right; color: {color}; font-weight: 600;">{sign}{chg:.2f}%</td>
-</tr>"""
-        return f"""
-<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #1a1a1a; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">
-{title}
-</h3>
+            drift_tag = ""
+            vs = p.get("verified_source")
+            if vs == "drift" and p.get("drift_pct"):
+                _d = p.get("drift_pct") or 0
+                drift_tag = f' <span style="color:#b7950b; font-size: 10px;" title="{_d:.2f}% drift vs Finnhub">&#x26A0;</span>'
+            elif vs == "yfinance_only":
+                drift_tag = ' <span style="color:#999; font-size: 10px;" title="Single-source (Finnhub not available for this ticker)">&middot;</span>'
+            body += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px; font-weight: 700;">{symbol}{drift_tag}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">${price:,.2f}</td><td style="padding: 10px; text-align: right; color: {color}; font-weight: 600;">{sign}{chg:.2f}%</td></tr>'
+        return f'''<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #1a1a1a; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">{title}</h3>
 <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;">
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Price</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Change</td>
-</tr>
-{body}
-</table>
-"""
+<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Price</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Change</td></tr>
+{body}</table>'''
 
-    movers_section = ""
-    if gainers or losers:
-        movers_section = f"""
-<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
-2. PORTFOLIO MOVERS
-</h2>
-{_movers_table(gainers, "Top 10 Gainers", "#27ae60")}
-{_movers_table(losers, "Top 10 Losers", "#c0392b")}
-"""
-
-    # ---- Portfolio summary ---------------------------------------------------
-
-    summary_section = ""
+    summary_block = ""
     if portfolio_perf:
         avg_change = sum(p.get("change_pct", 0) or 0 for p in portfolio_perf) / len(portfolio_perf)
         up_count = len([p for p in portfolio_perf if (p.get("change_pct") or 0) > 0])
         down_count = len([p for p in portfolio_perf if (p.get("change_pct") or 0) < 0])
         avg_sign = "+" if avg_change >= 0 else ""
         avg_color = "#27ae60" if avg_change >= 0 else "#c0392b"
-        summary_section = f"""
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Arial, sans-serif; font-size: 13px;">
-<tr style="border-bottom: 1px solid #e8e3de;">
-    <td style="padding: 10px;">Average move</td>
-    <td style="padding: 10px; text-align: right; color: {avg_color}; font-weight: 600;">{avg_sign}{avg_change:.2f}%</td>
-</tr>
-<tr style="border-bottom: 1px solid #e8e3de;">
-    <td style="padding: 10px;">Advancers</td>
-    <td style="padding: 10px; text-align: right; font-weight: 600;">{up_count}</td>
-</tr>
-<tr>
-    <td style="padding: 10px;">Decliners</td>
-    <td style="padding: 10px; text-align: right; font-weight: 600;">{down_count}</td>
-</tr>
-</table>
-"""
+        summary_block = f'''<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px;">Average move</td><td style="padding: 10px; text-align: right; color: {avg_color}; font-weight: 600;">{avg_sign}{avg_change:.2f}%</td></tr>
+<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px;">Advancers</td><td style="padding: 10px; text-align: right; font-weight: 600;">{up_count}</td></tr>
+<tr><td style="padding: 10px;">Decliners</td><td style="padding: 10px; text-align: right; font-weight: 600;">{down_count}</td></tr>
+</table>'''
 
-    # ---- 52-week extremes ----------------------------------------------------
+    section_3 = ""
+    if ai.get("portfolio_movers") or gainers or losers:
+        section_3 = _section_header(3, "PORTFOLIO MOVERS")
+        if ai.get("portfolio_movers"):
+            section_3 += _editorial_prose(ai["portfolio_movers"], margin_bottom=24)
+        section_3 += _movers_table(gainers, "Top 10 Gainers", "#27ae60")
+        section_3 += _movers_table(losers, "Top 10 Losers", "#c0392b")
+        section_3 += summary_block
 
+    # ---- 4. AFTER-HOURS WATCH (editorial + tables) --------------------------
+    ah_reported = [e for e in ah_earnings if e.get("reported")]
+    ah_pending = [e for e in ah_earnings if not e.get("reported")]
+
+    def _rev_fmt(v):
+        if v is None or not isinstance(v, (int, float)):
+            return ""
+        av = abs(v)
+        if av >= 1e9:
+            return f"${v/1e9:.1f}B"
+        if av >= 1e6:
+            return f"${v/1e6:.0f}M"
+        return f"${v:,.0f}"
+
+    ah_reported_block = ""
+    if ah_reported:
+        rows = ""
+        for e in ah_reported:
+            sym = e.get("symbol", "")
+            beat = e.get("beat")
+            status_txt = "BEAT" if beat else "MISS"
+            status_color = "#27ae60" if beat else "#c0392b"
+            eps_a = e.get("eps_actual")
+            eps_e = e.get("eps_estimate")
+            eps_str = f"${eps_a:.2f} / ${eps_e:.2f}" if isinstance(eps_a, (int, float)) and isinstance(eps_e, (int, float)) else "—"
+            surp = e.get("surprise_pct")
+            if isinstance(surp, (int, float)):
+                s_sign = "+" if surp >= 0 else ""
+                s_col = "#27ae60" if surp >= 0 else "#c0392b"
+                surp_html = f'<span style="color: {s_col}; font-weight: 600;">{s_sign}{surp:.1f}%</span>'
+            else:
+                surp_html = "—"
+            rev_a = _rev_fmt(e.get("rev_actual"))
+            rev_e = _rev_fmt(e.get("rev_estimate"))
+            rev_str = f"{rev_a} / {rev_e}" if rev_a and rev_e else "—"
+            rows += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px; font-weight: 700;">{sym}</td><td style="padding: 10px; text-align: center; color: {status_color}; font-weight: 600;">{status_txt}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{eps_str}</td><td style="padding: 10px; text-align: right;">{surp_html}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rev_str}</td></tr>'
+        ah_reported_block = f'''<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #1a1a1a; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">Reported After Close</h3>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: center;">Result</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">EPS Act/Est</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Surprise</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Revenue Act/Est</td></tr>
+{rows}</table>'''
+
+    ah_pending_block = ""
+    if ah_pending:
+        rows = ""
+        for e in ah_pending:
+            sym = e.get("symbol", "")
+            eps_e = e.get("eps_estimate")
+            est_str = f"${eps_e:.2f}" if isinstance(eps_e, (int, float)) else "n/a"
+            rev_e = _rev_fmt(e.get("rev_estimate")) or "—"
+            rows += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px; font-weight: 700;">{sym}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{est_str}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rev_e}</td></tr>'
+        ah_pending_block = f'''<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #999; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">Pending (Scheduled AMC, Not Yet Reported)</h3>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 13px;">
+<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Est. EPS</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Est. Revenue</td></tr>
+{rows}</table>'''
+
+    section_4 = ""
+    if ai.get("after_hours_watch") or ah_reported_block or ah_pending_block:
+        section_4 = _section_header(4, "AFTER-HOURS WATCH")
+        if ai.get("after_hours_watch"):
+            section_4 += _editorial_prose(ai["after_hours_watch"], margin_bottom=16)
+        section_4 += ah_reported_block + ah_pending_block
+
+    # ---- 5. NEWS SIGNAL (editorial + items) ---------------------------------
+    important_news = [n for n in filtered_news if n.get("category") in ("URGENT", "IMPORTANT")]
+    news_items_html = ""
+    for n in important_news[:10]:
+        ticker = n.get("ticker", "—")
+        title = n.get("title", "")
+        summary = n.get("summary", "") or ""
+        link = n.get("link", "#")
+        category = n.get("category", "")
+        news_items_html += f'''<div style="margin-bottom: 18px; padding: 14px 16px; background-color: #f9f7f5; border-left: 3px solid #c0392b;">
+<div style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;">[{ticker}] &middot; {category}</div>
+<div style="font-family: Georgia, serif; font-size: 14px; color: #1a1a1a; line-height: 1.5; margin-bottom: 6px;">{title}</div>
+<div style="font-family: Georgia, serif; font-size: 13px; color: #555; line-height: 1.55; margin-bottom: 10px;">{summary}</div>
+<a href="{link}" style="font-family: Arial, sans-serif; font-size: 11px; color: #c0392b; text-decoration: none; font-weight: 600;">Read the story &rarr;</a></div>'''
+
+    section_5 = ""
+    if ai.get("news_signal") or news_items_html:
+        section_5 = _section_header(5, "NEWS SIGNAL")
+        if ai.get("news_signal"):
+            section_5 += _editorial_prose(ai["news_signal"], margin_bottom=20)
+        section_5 += news_items_html
+
+    # ---- 6. TOMORROW'S SETUP (editorial only) -------------------------------
+    section_6 = ""
+    if ai.get("tomorrow_setup"):
+        section_6 = _section_header(6, "TOMORROW'S SETUP") + _editorial_prose(ai["tomorrow_setup"])
+
+    # ---- APPENDIX: 52-Week extremes + RSI Watch -----------------------------
     highs_52w = [p for p in portfolio_perf if p.get("at_52w_high")]
     lows_52w = [p for p in portfolio_perf if p.get("at_52w_low")]
 
@@ -883,194 +1260,66 @@ def format_market_recap_html(data: dict[str, Any]) -> str:
             price = p.get("price", 0) or 0
             extreme = p.get("year_high") if "High" in label else p.get("year_low")
             ext_str = f"${extreme:,.2f}" if extreme else "—"
-            body += f"""<tr style="border-bottom: 1px solid #e8e3de;">
-    <td style="padding: 10px; font-weight: 700;">{marker} {symbol}</td>
-    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">${price:,.2f}</td>
-    <td style="padding: 10px; text-align: right; color: #999; font-variant-numeric: tabular-nums;">{ext_str}</td>
-</tr>"""
-        return f"""
-<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: {color}; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">
-{label}
-</h3>
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;">
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Price</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">52-Week Level</td>
-</tr>
-{body}
-</table>
-"""
+            body += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px; font-weight: 700;">{marker} {symbol}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">${price:,.2f}</td><td style="padding: 10px; text-align: right; color: #999; font-variant-numeric: tabular-nums;">{ext_str}</td></tr>'
+        return f'''<h4 style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; color: {color}; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">{label}</h4>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 12px;">
+<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700;">Ticker</td><td style="padding: 10px; font-weight: 700; text-align: right;">Price</td><td style="padding: 10px; font-weight: 700; text-align: right;">52-Week Level</td></tr>
+{body}</table>'''
 
-    extremes_section = ""
+    appendix_52w = ""
     if highs_52w or lows_52w:
-        extremes_section = f"""
-<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
-3. 52-WEEK EXTREMES
-</h2>
-{_52w_table(highs_52w, "52-Week Highs", "&#x2605;", "#27ae60")}
-{_52w_table(lows_52w, "52-Week Lows", "&#x26A0;", "#c0392b")}
-"""
+        appendix_52w = '<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #666; margin: 24px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">52-WEEK EXTREMES</h3>'
+        appendix_52w += _52w_table(highs_52w, "52-Week Highs", "&#x2605;", "#27ae60")
+        appendix_52w += _52w_table(lows_52w, "52-Week Lows", "&#x26A0;", "#c0392b")
 
-    # ---- After-hours earnings ------------------------------------------------
-
-    ah_section = ""
-    if ah_earnings:
-        reported = [e for e in ah_earnings if e.get("reported")]
-        pending = [e for e in ah_earnings if not e.get("reported")]
-
-        reported_rows = ""
-        for e in reported:
-            sym = e.get("symbol", "")
-            beat = e.get("beat")
-            status_txt = "BEAT" if beat else "MISS"
-            status_color = "#27ae60" if beat else "#c0392b"
-            eps_a = e.get("eps_actual")
-            eps_e = e.get("eps_estimate")
-            eps_str = f"${eps_a:.2f} / ${eps_e:.2f}" if isinstance(eps_a, (int, float)) and isinstance(eps_e, (int, float)) else "—"
-            surp = e.get("surprise_pct")
-            if isinstance(surp, (int, float)):
-                surp_sign = "+" if surp >= 0 else ""
-                surp_color = "#27ae60" if surp >= 0 else "#c0392b"
-                surp_html = f'<span style="color: {surp_color}; font-weight: 600;">{surp_sign}{surp:.1f}%</span>'
-            else:
-                surp_html = "—"
-            rev_a = _format_rev(e.get("rev_actual"))
-            rev_e = _format_rev(e.get("rev_estimate"))
-            rev_str = f"{rev_a} / {rev_e}" if rev_a and rev_e else "—"
-
-            reported_rows += f"""<tr style="border-bottom: 1px solid #e8e3de;">
-    <td style="padding: 10px; font-weight: 700;">{sym}</td>
-    <td style="padding: 10px; text-align: center; color: {status_color}; font-weight: 600;">{status_txt}</td>
-    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{eps_str}</td>
-    <td style="padding: 10px; text-align: right;">{surp_html}</td>
-    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rev_str}</td>
-</tr>"""
-
-        reported_block = ""
-        if reported_rows:
-            reported_block = f"""
-<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #1a1a1a; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">
-Reported After Close
-</h3>
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;">
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: center;">Result</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">EPS Act/Est</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Surprise</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Revenue Act/Est</td>
-</tr>
-{reported_rows}
-</table>
-"""
-
-        pending_block = ""
-        if pending:
-            pending_rows = ""
-            for e in pending:
-                sym = e.get("symbol", "")
-                eps_e = e.get("eps_estimate")
-                est_str = f"${eps_e:.2f}" if isinstance(eps_e, (int, float)) else "n/a"
-                rev_e = _format_rev(e.get("rev_estimate")) or "—"
-                pending_rows += f"""<tr style="border-bottom: 1px solid #e8e3de;">
-    <td style="padding: 10px; font-weight: 700;">{sym}</td>
-    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{est_str}</td>
-    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rev_e}</td>
-</tr>"""
-            pending_block = f"""
-<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #999; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">
-Pending (Scheduled After Close, Not Yet Reported)
-</h3>
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;">
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Est. EPS</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Est. Revenue</td>
-</tr>
-{pending_rows}
-</table>
-"""
-
-        ah_section = f"""
-<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
-4. AFTER-HOURS EARNINGS
-</h2>
-{reported_block}
-{pending_block}
-"""
-
-    # ---- News signal ---------------------------------------------------------
-
-    news_section = ""
-    important = [n for n in filtered_news if n.get("category") in ("URGENT", "IMPORTANT")]
-    if important:
-        news_items = ""
-        for n in important[:10]:
-            ticker = n.get("ticker", "—")
-            title = n.get("title", "")
-            summary = n.get("summary", "") or ""
-            link = n.get("link", "#")
-            category = n.get("category", "")
-            news_items += f"""
-<div style="margin-bottom: 18px; padding: 14px 16px; background-color: #f9f7f5; border-left: 3px solid #c0392b;">
-    <div style="font-family: Arial, sans-serif; font-size: 11px; font-weight: 700; color: #999; text-transform: uppercase; letter-spacing: 1px; margin-bottom: 6px;">
-        [{ticker}] &middot; {category}
-    </div>
-    <div style="font-family: Georgia, serif; font-size: 14px; color: #1a1a1a; line-height: 1.5; margin-bottom: 6px;">
-        {title}
-    </div>
-    <div style="font-family: Georgia, serif; font-size: 13px; color: #555; line-height: 1.55; margin-bottom: 10px;">
-        {summary}
-    </div>
-    <a href="{link}" style="font-family: Arial, sans-serif; font-size: 11px; color: #c0392b; text-decoration: none; font-weight: 600;">Read the story &rarr;</a>
-</div>
-"""
-        news_section = f"""
-<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
-5. NEWS ON HOLDINGS
-</h2>
-{news_items}
-"""
-
-    # ---- RSI (optional, small) -----------------------------------------------
-
-    rsi_section = ""
+    appendix_rsi = ""
     if rsi_alerts:
         rsi_rows = ""
         for a in rsi_alerts[:10]:
             sym = a.get("symbol", "")
-            rsi = a.get("current_rsi", 0) or 0
+            rsi_val = a.get("current_rsi", 0) or 0
             min_rsi = a.get("min_rsi_52w", 0) or 0
             flags = []
-            if a.get("is_oversold"):
-                flags.append("oversold")
-            if a.get("is_52w_low"):
-                flags.append("52w RSI low")
+            if a.get("is_oversold"): flags.append("oversold")
+            if a.get("is_52w_low"): flags.append("52w RSI low")
             flag_str = " &middot; ".join(flags)
-            rsi_rows += f"""<tr style="border-bottom: 1px solid #e8e3de;">
-    <td style="padding: 10px; font-weight: 700;">{sym}</td>
-    <td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rsi:.1f}</td>
-    <td style="padding: 10px; text-align: right; color: #999; font-variant-numeric: tabular-nums;">{min_rsi:.1f}</td>
-    <td style="padding: 10px; color: #c0392b; font-size: 12px;">{flag_str}</td>
-</tr>"""
-        rsi_section = f"""
-<h2 style="font-family: Arial, sans-serif; font-size: 14px; font-weight: 700; color: #1a1a1a; margin: 0 0 16px 0; padding-bottom: 8px; border-bottom: 1px solid #c0392b;">
-6. RSI WATCH
-</h2>
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Arial, sans-serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;">
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">RSI</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">52w Min</td>
-    <td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Flag</td>
-</tr>
-{rsi_rows}
-</table>
-"""
+            rsi_rows += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px; font-weight: 700;">{sym}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rsi_val:.1f}</td><td style="padding: 10px; text-align: right; color: #999; font-variant-numeric: tabular-nums;">{min_rsi:.1f}</td><td style="padding: 10px; color: #c0392b; font-size: 12px;">{flag_str}</td></tr>'
+        appendix_rsi = f'''<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #666; margin: 24px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">RSI WATCH</h3>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Arial, sans-serif; font-size: 12px;">
+<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700;">Ticker</td><td style="padding: 10px; font-weight: 700; text-align: right;">RSI</td><td style="padding: 10px; font-weight: 700; text-align: right;">52w Min</td><td style="padding: 10px; font-weight: 700;">Flag</td></tr>
+{rsi_rows}</table>'''
 
-    # ---- Assemble document ---------------------------------------------------
+    # ---- Data Quality footer ------------------------------------------------
+    dq_footer = ""
+    checked = data_quality.get("checked", 0) if data_quality else 0
+    drift_count = data_quality.get("drift", 0) if data_quality else 0
+    material_count = data_quality.get("material_drift", 0) if data_quality else 0
+    flagged = data_quality.get("flagged_symbols") or [] if data_quality else []
 
+    if checked > 0:
+        dq_status_color = "#27ae60" if material_count == 0 else "#b7950b" if material_count < 3 else "#c0392b"
+        dq_body = (f"<strong>{checked}</strong> holdings cross-checked against Finnhub. "
+                   f"<strong>{data_quality.get('consensus', 0)}</strong> consensus, "
+                   f"<strong>{drift_count}</strong> drift &gt; {DRIFT_TOLERANCE_PCT if 'DRIFT_TOLERANCE_PCT' in globals() else 0.10:.2f}%, "
+                   f"<strong>{material_count}</strong> material drift &gt; {MATERIAL_DRIFT_PCT if 'MATERIAL_DRIFT_PCT' in globals() else 0.50:.2f}%.")
+        flagged_html = ""
+        if flagged:
+            rows = ""
+            for sym, d, yf_p, fh_p in flagged[:8]:
+                rows += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 8px; font-weight: 700;">{sym}</td><td style="padding: 8px; text-align: right; font-variant-numeric: tabular-nums;">${yf_p:.2f}</td><td style="padding: 8px; text-align: right; font-variant-numeric: tabular-nums;">${fh_p:.2f}</td><td style="padding: 8px; text-align: right; color:#b7950b; font-weight: 600;">{d:.2f}%</td></tr>'
+            flagged_html = f'''<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #fefaf0; border: 1px solid #e8d9b0; margin-top: 12px; font-family: Arial, sans-serif; font-size: 12px;">
+<tr style="background-color: #f7ecd0;"><td style="padding: 8px; font-weight: 700;">Ticker</td><td style="padding: 8px; font-weight: 700; text-align: right;">yfinance</td><td style="padding: 8px; font-weight: 700; text-align: right;">Finnhub</td><td style="padding: 8px; font-weight: 700; text-align: right;">Drift</td></tr>
+{rows}</table>
+<div style="font-family: Arial, sans-serif; font-size: 11px; color: #999; margin-top: 6px;">Prices shown in this brief use yfinance as the primary source. Flagged rows indicate where Finnhub disagreed materially.</div>'''
+        dq_footer = f'''<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #666; margin: 32px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">Data Quality</h3>
+<div style="font-family: Arial, sans-serif; font-size: 12px; color: #444; line-height: 1.55; padding: 12px 14px; background-color: #fefaf0; border-left: 3px solid {dq_status_color};">{dq_body}</div>
+{flagged_html}'''
+
+    appendix_block = ""
+    if appendix_52w or appendix_rsi or dq_footer:
+        appendix_block = f'<hr style="border: none; border-bottom: 2px solid #e8e3de; margin: 40px 0;">\n<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #666; margin: 0 0 16px 0; text-transform: uppercase; letter-spacing: 1px;">APPENDIX</h3>\n{appendix_52w}\n{appendix_rsi}\n{dq_footer}'
+
+    # ---- Assemble document --------------------------------------------------
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -1112,19 +1361,13 @@ Pending (Scheduled After Close, Not Yet Reported)
 <tr>
 <td style="padding: 40px;">
 
-{close_section}
-
-{movers_section}
-
-{summary_section}
-
-{extremes_section}
-
-{ah_section}
-
-{news_section}
-
-{rsi_section}
+{section_1}
+{section_2}
+{section_3}
+{section_4}
+{section_5}
+{section_6}
+{appendix_block}
 
 <!-- FOOTER -->
 <div style="margin-top: 40px; padding-top: 24px; border-top: 1px solid #e8e3de; font-family: Arial, sans-serif; font-size: 12px; color: #999; line-height: 1.6;">
@@ -1476,6 +1719,160 @@ def _format_snapshot_text(snapshot: dict[str, Any]) -> str:
 # from morning_briefing.py — it has proper chunking, retry logic, and the
 # correct AppleScript pattern for the iMac's Messages.app configuration.
 # Do NOT rewrite the iMessage sender here.
+
+
+# ============================================================================
+# 3b. PLAIN TEXT FORMATTING — MARKET RECAP (afternoon / post-close)
+# ============================================================================
+
+def format_recap_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
+    """
+    Format the post-close market recap as plain text for iMessage delivery.
+    Parallel to format_morning_text — editorial voice at the top, key data
+    below, optimized for multi-chunk iMessage delivery.
+    """
+    market_close = data.get("market_close", {}) or {}
+    portfolio_perf = data.get("portfolio_perf", []) or []
+    ah_earnings = data.get("ah_earnings", []) or []
+    data_quality = data.get("data_quality", {}) or {}
+    ai = ai_brief or {}
+
+    now = datetime.now()
+    date_str = now.strftime("%A, %B %d")
+    time_str = now.strftime("%I:%M %p PT").lstrip("0")
+
+    # Header
+    text = f"""
+┌─────────────────────────────────────────┐
+│   MARKET RECAP                          │
+│   {date_str:<37} │
+└─────────────────────────────────────────┘
+
+▸ CLOSING PULSE
+
+{ai.get('closing_pulse', 'See detailed data in email.')}
+
+▸ MACRO READ
+
+{ai.get('macro_read', '')}
+"""
+
+    # Index data
+    idx_lines = []
+    for label, val_key, chg_key in [
+        ("S&P 500", "sp500", "sp500_change"),
+        ("NASDAQ", "nasdaq", "nasdaq_change"),
+        ("Dow Jones", "dow", "dow_change"),
+        ("VIX", "vix", None),
+        ("10Y Yield", "treasury_10y", None),
+    ]:
+        val = market_close.get(val_key)
+        if val is None:
+            continue
+        chg = market_close.get(chg_key) if chg_key else None
+        suffix = "%" if val_key in ("treasury_10y", "vix") else ""
+        val_str = f"{val:,.2f}{suffix}"
+        chg_str = ""
+        if isinstance(chg, (int, float)):
+            arrow = "▲" if chg >= 0 else "▼"
+            sign = "+" if chg >= 0 else ""
+            chg_str = f"  {arrow} {sign}{chg:.2f}%"
+        # Drift tag
+        if market_close.get(f"{val_key}_verified_source") == "drift":
+            chg_str += " [drift]"
+        idx_lines.append(f"  {label:<12} {val_str:>12}{chg_str}")
+    if idx_lines:
+        text += "\n" + "\n".join(idx_lines) + "\n"
+
+    text += f"""
+▸ PORTFOLIO MOVERS
+
+{ai.get('portfolio_movers', '')}
+"""
+
+    # Top movers compact
+    sorted_perf = sorted(portfolio_perf, key=lambda x: x.get("change_pct", 0) or 0, reverse=True)
+    gainers = [p for p in sorted_perf if (p.get("change_pct") or 0) > 0][:5]
+    losers = list(reversed([p for p in sorted_perf if (p.get("change_pct") or 0) < 0][-5:]))
+    if gainers:
+        text += "\nTOP GAINERS:\n"
+        for p in gainers:
+            sym = p.get("symbol", "")
+            price = p.get("price", 0) or 0
+            chg = p.get("change_pct", 0) or 0
+            drift = " ⚠" if p.get("verified_source") == "drift" else ""
+            text += f"  ▲ {sym:<6} ${price:>8,.2f}  +{chg:.2f}%{drift}\n"
+    if losers:
+        text += "\nTOP LOSERS:\n"
+        for p in losers:
+            sym = p.get("symbol", "")
+            price = p.get("price", 0) or 0
+            chg = p.get("change_pct", 0) or 0
+            drift = " ⚠" if p.get("verified_source") == "drift" else ""
+            text += f"  ▼ {sym:<6} ${price:>8,.2f}  {chg:.2f}%{drift}\n"
+
+    # Summary
+    if portfolio_perf:
+        up = len([p for p in portfolio_perf if (p.get("change_pct") or 0) > 0])
+        down = len([p for p in portfolio_perf if (p.get("change_pct") or 0) < 0])
+        avg = sum((p.get("change_pct") or 0) for p in portfolio_perf) / len(portfolio_perf)
+        arrow = "▲" if avg >= 0 else "▼"
+        sign = "+" if avg >= 0 else ""
+        text += f"\n  Avg: {arrow} {sign}{avg:.2f}%  |  Up: {up}  Down: {down}\n"
+
+    # After-hours
+    if ah_earnings:
+        text += f"""
+▸ AFTER-HOURS WATCH
+
+{ai.get('after_hours_watch', '')}
+"""
+        reported = [e for e in ah_earnings if e.get("reported")]
+        pending = [e for e in ah_earnings if not e.get("reported")]
+        if reported:
+            text += "\nREPORTED:\n"
+            for e in reported:
+                sym = e.get("symbol", "")
+                beat = "✓ BEAT" if e.get("beat") else "✗ MISS"
+                surp = e.get("surprise_pct")
+                surp_str = f" {'+' if isinstance(surp, (int, float)) and surp >= 0 else ''}{surp:.1f}%" if isinstance(surp, (int, float)) else ""
+                text += f"  {sym:<6} {beat}{surp_str}\n"
+        if pending:
+            text += "\nPENDING:\n"
+            for e in pending:
+                text += f"  {e.get('symbol', ''):<6} (scheduled AMC)\n"
+
+    # News + Tomorrow
+    if ai.get("news_signal"):
+        text += f"""
+▸ NEWS SIGNAL
+
+{ai.get('news_signal', '')}
+"""
+    if ai.get("tomorrow_setup"):
+        text += f"""
+▸ TOMORROW'S SETUP
+
+{ai.get('tomorrow_setup', '')}
+"""
+
+    # Data quality line (brief)
+    checked = data_quality.get("checked", 0) if data_quality else 0
+    material = data_quality.get("material_drift", 0) if data_quality else 0
+    if checked > 0:
+        if material > 0:
+            text += f"\n⚠ Data quality: {material} holdings with material price drift vs Finnhub — see email for details.\n"
+        else:
+            text += f"\n✓ Prices verified — {checked} holdings cross-checked against Finnhub, all within {DRIFT_TOLERANCE_PCT:.2f}% tolerance.\n"
+
+    # Footer
+    holdings_count = data.get("holdings_count", 0)
+    text += f"""
+───────────────────────────────────────────
+{holdings_count} holdings · {time_str}
+Full brief + data → email
+"""
+    return text
 
 
 # ============================================================================
