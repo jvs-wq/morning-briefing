@@ -875,10 +875,10 @@ def fetch_premarket_movers(api_key: str, tickers: list[str], threshold: float = 
                     try:
                         info = yf.Ticker(symbol).info
                         price = info.get(price_field)
-                        prev_close = info.get("regularMarketPreviousClose")
-                        # No fallback: if ticker lacks pre/post price, skip it.
-                        # regularMarketPrice is yesterday's close for OTC/foreign
-                        # tickers and would show yesterday's move, not premarket.
+                        # Use regularMarketPrice (yesterday's actual close) as baseline,
+                        # NOT regularMarketPreviousClose which can be stale (2 days old)
+                        # early in pre-market before Yahoo updates the field.
+                        prev_close = info.get("regularMarketPrice")
                         if price and prev_close and prev_close != 0:
                             change_pct = ((price - prev_close) / prev_close) * 100
                             found_symbols.add(symbol)
