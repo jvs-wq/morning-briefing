@@ -1395,106 +1395,48 @@ def format_market_recap_html(data, ai_brief=None):
 
 def format_morning_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
     """
-    Format the morning intelligence brief as plain text for iMessage delivery.
-    Uses box-drawing characters and editorial voice.
-
-    Returns a string optimized for multi-part iMessage delivery (split at ~4000 chars).
+    Format a concise iMessage teaser for the morning intelligence brief.
+    Designed to fit in a single ~1500-char chunk on the lock screen.
+    Full analysis lives in the HTML email.
     """
     snapshot = data.get("market_snapshot", {})
     movers = data.get("premarket_movers", [])
-    scorecard = data.get("scorecard", [])
-    earnings = data.get("earnings", [])
 
     now = datetime.now()
     date_str = now.strftime("%A, %B %d")
     time_str = now.strftime("%I:%M %p PT").lstrip("0")
 
-    text = f"""
-┌─────────────────────────────────────────┐
-│   MORNING INTELLIGENCE                  │
-│   {date_str:<35} │
-└─────────────────────────────────────────┘
+    # Market snapshot — compact one-liner
+    sp = snapshot.get("sp500_futures")
+    sp_chg = snapshot.get("sp500_change")
+    nq = snapshot.get("nasdaq_futures")
+    nq_chg = snapshot.get("nasdaq_change")
+    treas = snapshot.get("treasury_10y")
+    sp_str = f"S&P {sp:,.0f} ({'+' if sp_chg >= 0 else ''}{sp_chg:.1f}%)" if sp and sp_chg is not None else ""
+    nq_str = f"NQ {nq:,.0f} ({'+' if nq_chg >= 0 else ''}{nq_chg:.1f}%)" if nq and nq_chg is not None else ""
+    tr_str = f"10Y {treas:.2f}%" if treas else ""
+    mkt_line = " · ".join(x for x in [sp_str, nq_str, tr_str] if x)
+
+    # Top 3 movers — one line each
+    mover_lines = ""
+    for m in movers[:3]:
+        sym = m.get("symbol", "?")
+        chg = m.get("change_pct", 0)
+        sign = "+" if chg >= 0 else ""
+        mover_lines += f"  {sym:<6} {sign}{chg:.1f}%\n"
+
+    text = f"""MORNING BRIEF · {date_str}
+
+{mkt_line}
 
 ▸ WHAT MATTERS
 
 {ai_brief.get('what_matters', 'No data available')}
 
-▸ MARKET SNAPSHOT
-
-{_format_snapshot_text(snapshot)}
-
-▸ PRE-MARKET ANALYSIS
-
-{ai_brief.get('premarket_analysis', 'No significant movers')}
-"""
-
-    if movers:
-        text += "\nPRE-MARKET MOVERS:\n"
-        for mover in movers[:10]:
-            symbol = mover.get("symbol", "N/A")
-            price = mover.get("price", "N/A")
-            change = mover.get("change_pct", "N/A")
-            text += f"  {symbol:<6} {price:>8}  {change:>8}\n"
-
-    text += f"""
-▸ EARNINGS INTELLIGENCE
-
-{ai_brief.get('earnings_intelligence', 'No recent earnings')}
-"""
-
-    if scorecard:
-        text += "\nRECENT SCORES (4-wk):\n"
-        for item in scorecard[:8]:
-            symbol = item.get("symbol", "N/A")
-            beat_status = "✓ BEAT" if item.get("beat") else "✗ MISS"
-            surprise = item.get("surprise_pct", 0)
-            surp_str = f"{'+' if surprise >= 0 else ''}{surprise:.1f}%" if isinstance(surprise, (int, float)) else str(surprise)
-            # Revenue indicator
-            rev_mark = ""
-            if item.get("rev_actual") and item.get("rev_estimate"):
-                rev_mark = " rev✓" if item.get("rev_beat") else " rev✗"
-            # Guidance indicator
-            guidance = item.get("guidance_signal", "")
-            guide_mark = ""
-            if "raised" in guidance:
-                guide_mark = " ↑"
-            elif "lowered" in guidance:
-                guide_mark = " ↓"
-            rpt_date = item.get("date", "")
-            date_tag = f" ({rpt_date})" if rpt_date else ""
-            text += f"  {symbol:<6} {beat_status:<8} EPS {surp_str:>8}{rev_mark}{guide_mark}{date_tag}\n"
-
-    analyst_actions = data.get("analyst_actions", {})
-    if analyst_actions:
-        text += "\nANALYST ACTIONS (7d):\n"
-        for symbol in sorted(analyst_actions.keys()):
-            for a in analyst_actions[symbol][:2]:
-                analyst = a.get("analyst", "?")
-                action = a.get("action", "")
-                prior = a.get("prior_rating", "")
-                pt = a.get("price_target")
-                prior_pt = a.get("prior_target")
-                rating = f"{prior}→{action}" if prior else action
-                if pt and prior_pt:
-                    direction = "↑" if pt > prior_pt else "↓"
-                    text += f"  {symbol:<6} {analyst}: {rating} PT ${prior_pt:.0f}→${pt:.0f}{direction}\n"
-                elif pt:
-                    text += f"  {symbol:<6} {analyst}: {rating} PT ${pt:.0f}\n"
-                else:
-                    text += f"  {symbol:<6} {analyst}: {rating}\n"
-
-    text += f"""
-▸ NEWS SIGNAL
-
-{ai_brief.get('news_signal', 'No material news identified')}
-
-▸ WATCHLIST
-
-{ai_brief.get('watchlist', 'Monitor market open and earnings')}
-
-───────────────────────────────────────────
-85 holdings · {time_str}
-Full brief + data → email
+TOP MOVERS:
+{mover_lines}
+───────────────────────────────
+{time_str} · Full brief → email
 """
 
     return text
