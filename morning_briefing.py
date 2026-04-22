@@ -34,6 +34,9 @@ from morning_briefing_redesign import (
     format_market_recap_html,
     generate_ai_recap_brief,
     format_recap_text,
+    generate_ai_premarket_brief,
+    format_premarket_html,
+    format_premarket_text,
     send_html_email,
 )
 
@@ -3755,65 +3758,89 @@ def run_market_recap():
 
 
 def run_premarket_update():
-    """Run the 6:20 AM pre-market update - quick check before the bell."""
+    """Run the 6:20 AM pre-market update — AI editorial pipeline matching morning brief."""
     print("\n" + "=" * 50)
-    print("Pre-Market Update")
+    print("Pre-Market Update (v2)")
     print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     print("=" * 50)
 
-    # Combine all tickers
     all_tickers = CONFIG["INDIVIDUAL_STOCKS"] + CONFIG["ETFS"]
     ticker_set = set(all_tickers)
 
     print(f"\nChecking {len(all_tickers)} holdings...")
 
-    # Fetch data (lightweight - no AI filtering)
-    print("\n[1/4] Fetching market snapshot...")
+    print("\n[1/5] Fetching market snapshot...")
     market_snapshot = fetch_market_snapshot(CONFIG["FINNHUB_API_KEY"])
     sp = market_snapshot.get("sp500_futures")
     nq = market_snapshot.get("nasdaq_futures")
     print(f"  S&P Futures: {sp:,.0f}" if sp else "  S&P Futures: N/A")
     print(f"  NASDAQ Futures: {nq:,.0f}" if nq else "  NASDAQ Futures: N/A")
 
-    print("\n[2/4] Fetching pre-market movers...")
+    print("\n[2/5] Fetching pre-market movers...")
     premarket_movers = fetch_premarket_movers(CONFIG["FMP_API_KEY"], all_tickers, threshold=2.0)
     print(f"  Found {len(premarket_movers)} holdings moving >2%")
 
-    print("\n[3/4] Fetching today's earnings...")
+    print("\n[3/5] Fetching today's earnings...")
     finnhub_upcoming = fetch_finnhub_earnings(CONFIG["FINNHUB_API_KEY"], ticker_set)
     print(f"  Found {len(finnhub_upcoming)} earnings events")
 
-    print("\n[4/4] Fetching Vital Knowledge highlights...")
-    vk_highlights = fetch_vital_knowledge(
-        all_tickers,
-        CONFIG["GMAIL_CREDENTIALS_FILE"],
-        CONFIG["GMAIL_TOKEN_FILE"],
-        CONFIG["VITAL_KNOWLEDGE_SENDER"]
-    )
+    # Load earnings history for scorecard context
+    print("\n[4/5] Loading earnings history...")
+    earnings_history = load_earnings_history(CONFIG["EARNINGS_HISTORY_FILE"])
+    scorecard = list(earnings_history.get("entries", {}).values())
+    scorecard.sort(key=lambda x: x.get("date", ""), reverse=True)
+    print(f"  {len(scorecard)} recent earnings in history")
 
-    print("\nGenerating pre-market update...")
-    update = format_premarket_update(
-        market_snapshot, premarket_movers, finnhub_upcoming,
-        vk_highlights, len(all_tickers)
-    )
+    # Bundle data for AI
+    briefing_data = {
+        "market_snapshot": market_snapshot,
+        "premarket_movers": premarket_movers,
+        "earnings": finnhub_upcoming,
+        "scorecard": scorecard,
+        "holdings_count": len(all_tickers),
+    }
 
-    # Print update to console
+    # Generate AI editorial brief
+    print("\n[5/5] Generating AI pre-market brief...")
+    try:
+        ai_brief = generate_ai_premarket_brief(briefing_data, CONFIG["ANTHROPIC_API_KEY"])
+        print("  ✓ AI brief generated")
+
+        html_email = format_premarket_html(ai_brief, briefing_data)
+        print(f"  ✓ HTML email: {len(html_email):,} bytes")
+
+        text_message = format_premarket_text(ai_brief, briefing_data)
+        print(f"  ✓ Plain text: {len(text_message):,} chars")
+    except Exception as e:
+        print(f"  ✗ AI brief failed: {e}")
+        print("  Falling back to legacy formatter...")
+        vk_highlights = []
+        text_message = format_premarket_update(
+            market_snapshot, premarket_movers, finnhub_upcoming,
+            vk_highlights, len(all_tickers)
+        )
+        html_email = None
+
+    # Console output
     print("\n" + "=" * 50)
-    print(update)
+    print(text_message)
     print("=" * 50)
 
-    # Send via iMessage
+    # Send iMessage (slim teaser)
     print(f"\nSending iMessage to {CONFIG['IMESSAGE_RECIPIENT']}...")
-    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], update)
+    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], text_message)
 
-    # Send via Email
+    # Send HTML email
     print(f"Sending email to {CONFIG['EMAIL_RECIPIENT']}...")
     today = datetime.now().strftime("%B %d, %Y")
-    email_subject = f"Pre-Market Update - {today}"
-    email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, update)
+    email_subject = f"Pre-Market Update – {today}"
+    if html_email:
+        email_success = send_html_email(CONFIG["EMAIL_RECIPIENT"], email_subject, html_email)
+    else:
+        email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, text_message)
 
     if imessage_success and email_success:
-        print("\n✓ Pre-market update delivered!")
+        print("\n✓ Pre-market update delivered via iMessage and Email!")
     elif imessage_success:
         print("\n⚠ Update sent via iMessage only (email failed)")
     elif email_success:
@@ -3824,7 +3851,15 @@ def run_premarket_update():
 
 def main():
     """Main entry point - dispatch based on command line argument."""
-    mode = sys.argv[1] if len(sys.argv) > 1 else "morning"
+    # Support both "python3 script.py premarket" and "python3 script.py --mode premarket"
+    if len(sys.argv) > 2 and sys.argv[1] == "--mode":
+        mode = sys.argv[2]
+    elif len(sys.argv) > 1 and not sys.argv[1].startswith("--"):
+        mode = sys.argv[1]
+    elif len(sys.argv) > 1:
+        mode = sys.argv[1]  # handles --setup-gmail etc.
+    else:
+        mode = "morning"
 
     if mode == "--setup-gmail":
         print("\n" + "=" * 50)

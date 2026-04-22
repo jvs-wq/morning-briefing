@@ -1818,5 +1818,275 @@ Full brief + data → email
 
 
 # ============================================================================
+# 6. PRE-MARKET UPDATE (6:20 AM) — AI EDITORIAL PIPELINE
+# ============================================================================
+
+PREMARKET_SYSTEM_PROMPT = """You are the senior portfolio analyst for a concentrated, high-conviction investment firm with ~$900M AUM. The market opens in 40 minutes. This is the final pre-open intelligence brief — the CEO is already awake, already read the 5:00 AM morning brief, and now needs a DELTA update: what changed since then, and what's the game plan for the open.
+
+PORTFOLIO CONTEXT:
+- PLTR is the anchor (~30%). Concentrated, high-conviction portfolio.
+- Priority holdings: PLTR, NVDA, TSLA, META, AMZN, GOOGL, AMD, SOFI, UBER, MSFT, AAPL, JPM, COST, ABNB, AFRM, HIMS, NU, ASML
+- CEO's principle: "Never be surprised by material events."
+
+WRITING DISCIPLINE:
+- This is a DELTA update, not a rehash. The morning brief already covered macro context and earnings history. Focus on what moved in the last 80 minutes and what's new.
+- Be extremely concise. Max 400 words total. The CEO is reading this on his phone walking to the desk.
+- Lead with the single most actionable signal for the open.
+- Name specific levels, prices, percentages. No vague commentary.
+- If nothing material changed since the 5 AM brief, say so in one sentence and focus on the open setup.
+
+OUTPUT STRUCTURE (return as valid JSON with these exact keys):
+{
+  "open_signal": "1-2 paragraphs. The single most important thing for the open. What moved since the morning brief, and what it means for positioning. If an earnings print just dropped, grade it. If futures shifted, explain why.",
+  "movers_update": "Quick-hit read on the top pre-market movers. 2-3 sentences connecting the moves to portfolio themes. Skip anything already covered in the morning brief unless the magnitude changed materially.",
+  "bell_plan": "2-3 specific things to do or watch at the open. Levels, catalysts, and tactical setups. 'If SOFI opens above $18, the breakout is real — size up.' Not 'watch SOFI.' Include any earnings reporting BMO that weren't available at 5 AM."
+}"""
+
+
+def generate_ai_premarket_brief(data: dict[str, Any], api_key: str) -> dict[str, str]:
+    """Generate a concise pre-market delta brief using Claude."""
+    client = Anthropic(api_key=api_key)
+
+    # Build a lighter payload than the morning brief
+    snapshot = data.get("market_snapshot", {})
+    movers = data.get("premarket_movers", [])
+    earnings = data.get("earnings", [])
+    scorecard = data.get("scorecard", [])
+
+    payload = "PRE-MARKET DATA (6:20 AM PT — bell in 40 min):\n\n"
+
+    payload += "MARKET SNAPSHOT:\n"
+    sp = snapshot.get("sp500_futures")
+    sp_chg = snapshot.get("sp500_change")
+    nq = snapshot.get("nasdaq_futures")
+    nq_chg = snapshot.get("nasdaq_change")
+    treas = snapshot.get("treasury_10y")
+    if sp:
+        payload += f"- S&P Futures: {sp:,.0f} ({'+' if sp_chg and sp_chg >= 0 else ''}{sp_chg:.2f}%)\n"
+    if nq:
+        payload += f"- NASDAQ Futures: {nq:,.0f} ({'+' if nq_chg and nq_chg >= 0 else ''}{nq_chg:.2f}%)\n"
+    if treas:
+        payload += f"- 10Y Treasury: {treas:.3f}%\n"
+
+    payload += "\nPRE-MARKET MOVERS (portfolio holdings):\n"
+    if movers:
+        for m in movers[:15]:
+            payload += f"- {m['symbol']}: ${m.get('price', 0):.2f} ({'+' if m.get('change_pct', 0) >= 0 else ''}{m.get('change_pct', 0):.1f}%)\n"
+    else:
+        payload += "- No holdings moving >2% pre-market\n"
+
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    todays = [e for e in earnings if e.get("date") == today_str]
+    if todays:
+        payload += "\nREPORTING TODAY:\n"
+        for e in todays:
+            timing = "pre" if e.get("hour") == "bmo" else "post" if e.get("hour") == "amc" else "?"
+            eps = e.get("eps_estimate")
+            rev = e.get("revenue_estimate")
+            eps_str = f" EPS ${eps:.2f}" if eps else ""
+            rev_str = f" Rev ${rev/1e9:.1f}B" if rev and isinstance(rev, (int, float)) and rev >= 1e9 else ""
+            payload += f"- {e['symbol']} ({timing}){eps_str}{rev_str}\n"
+
+    if scorecard:
+        payload += "\nRECENT SCORECARD (for context):\n"
+        for s in scorecard[:5]:
+            beat = "BEAT" if s.get("beat") else "MISS"
+            payload += f"- {s['symbol']}: {beat} EPS {s.get('surprise_pct', 0):+.1f}%\n"
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2048,
+            system=PREMARKET_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": payload}],
+        )
+        response_text = message.content[0].text
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            brief = json.loads(json_match.group())
+            for key in ["open_signal", "movers_update", "bell_plan"]:
+                if key not in brief:
+                    brief[key] = ""
+            return brief
+        print("ERROR: Could not parse JSON from premarket AI response")
+        return _fallback_premarket_brief(data)
+    except Exception as e:
+        print(f"ERROR in premarket AI generation: {e}")
+        return _fallback_premarket_brief(data)
+
+
+def _fallback_premarket_brief(data: dict) -> dict:
+    """Fallback if AI generation fails."""
+    movers = data.get("premarket_movers", [])
+    top = movers[0] if movers else {}
+    return {
+        "open_signal": f"Top mover: {top.get('symbol', 'N/A')} {top.get('change_pct', 0):+.1f}% pre-market." if top else "No significant pre-market moves.",
+        "movers_update": "See movers table below.",
+        "bell_plan": "Monitor market open. Full data in email.",
+    }
+
+
+def format_premarket_html(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
+    """Format the 6:20 AM pre-market update as HTML email."""
+    snapshot = data.get("market_snapshot", {})
+    movers = data.get("premarket_movers", [])
+    earnings = data.get("earnings", [])
+    scorecard = data.get("scorecard", [])
+
+    now = datetime.now()
+    date_str = now.strftime("%B %d, %Y")
+    time_str = now.strftime("%I:%M %p PT").lstrip("0")
+
+    # Market snapshot line
+    sp = snapshot.get("sp500_futures")
+    sp_chg = snapshot.get("sp500_change")
+    nq = snapshot.get("nasdaq_futures")
+    nq_chg = snapshot.get("nasdaq_change")
+    treas = snapshot.get("treasury_10y")
+
+    # Futures table
+    futures_rows = ""
+    if sp is not None:
+        arrow = "&#x25B2;" if sp_chg and sp_chg >= 0 else "&#x25BC;"
+        color = "#27ae60" if sp_chg and sp_chg >= 0 else "#c0392b"
+        futures_rows += f'<tr><td style="font-weight:700;">S&P Futures</td><td style="text-align:right;">{sp:,.0f}</td><td style="text-align:right;color:{color};font-weight:600;">{arrow} {sp_chg:+.2f}%</td></tr>'
+    if nq is not None:
+        arrow = "&#x25B2;" if nq_chg and nq_chg >= 0 else "&#x25BC;"
+        color = "#27ae60" if nq_chg and nq_chg >= 0 else "#c0392b"
+        futures_rows += f'<tr><td style="font-weight:700;">NASDAQ Futures</td><td style="text-align:right;">{nq:,.0f}</td><td style="text-align:right;color:{color};font-weight:600;">{arrow} {nq_chg:+.2f}%</td></tr>'
+    if treas is not None:
+        futures_rows += f'<tr><td style="font-weight:700;">10Y Treasury</td><td style="text-align:right;">{treas:.2f}%</td><td></td></tr>'
+
+    # Movers table
+    movers_rows = ""
+    for m in movers[:10]:
+        chg = m.get("change_pct", 0)
+        color = "#27ae60" if chg >= 0 else "#c0392b"
+        arrow = "&#x25B2;" if chg >= 0 else "&#x25BC;"
+        movers_rows += f'<tr style="border-bottom:1px solid #e8e3de;"><td style="font-weight:700;">{m["symbol"]}</td><td style="text-align:right;">${m.get("price", 0):.2f}</td><td style="text-align:right;color:{color};font-weight:600;">{arrow} {chg:+.1f}%</td></tr>'
+
+    # Today's earnings table
+    today_str = now.strftime("%Y-%m-%d")
+    todays = [e for e in earnings if e.get("date") == today_str]
+    earnings_rows = ""
+    if todays:
+        for e in sorted(todays, key=lambda x: 0 if x.get("hour") == "bmo" else 1):
+            timing = "Pre" if e.get("hour") == "bmo" else "Post" if e.get("hour") == "amc" else "TBD"
+            eps = e.get("eps_estimate")
+            eps_str = f"${eps:.2f}" if eps else "—"
+            rev = e.get("revenue_estimate")
+            rev_str = f"${rev/1e9:.1f}B" if rev and isinstance(rev, (int, float)) and rev >= 1e9 else "—"
+            earnings_rows += f'<tr style="border-bottom:1px solid #e8e3de;"><td style="font-weight:700;">{e["symbol"]}</td><td>{timing}</td><td style="text-align:right;">{eps_str}</td><td style="text-align:right;">{rev_str}</td></tr>'
+
+    earnings_table = ""
+    if earnings_rows:
+        earnings_table = f"""
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:32px 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Reporting Today
+</h2>
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Arial,sans-serif;font-size:13px;">
+<tr style="background-color:#ebe7e1;"><td style="font-weight:700;">Ticker</td><td>Timing</td><td style="text-align:right;">Est. EPS</td><td style="text-align:right;">Est. Rev</td></tr>
+{earnings_rows}
+</table>
+"""
+
+    html = f"""
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background-color:#f5f0eb;">
+<tr><td style="padding:40px 32px;">
+
+<!-- HEADER -->
+<div style="background-color:#1a1a1a;padding:24px 32px;margin-bottom:4px;">
+    <h1 style="font-family:Georgia,serif;font-size:22px;font-weight:400;color:#ffffff;margin:0;letter-spacing:2px;">PRE-MARKET UPDATE</h1>
+    <div style="font-family:Arial,sans-serif;font-size:12px;color:#999;margin-top:6px;">{date_str} · {time_str} · Bell in 40 min</div>
+</div>
+<div style="height:3px;background-color:#c0392b;margin-bottom:32px;"></div>
+
+<!-- OPEN SIGNAL -->
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Open Signal
+</h2>
+<div style="font-family:Georgia,serif;font-size:15px;color:#1a1a1a;margin-bottom:32px;line-height:1.7;">
+{ai_brief.get('open_signal', 'No significant changes since morning brief.')}
+</div>
+
+<!-- FUTURES -->
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Arial,sans-serif;font-size:13px;">
+{futures_rows}
+</table>
+
+<!-- MOVERS UPDATE -->
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Pre-Market Movers
+</h2>
+<div style="font-family:Georgia,serif;font-size:15px;color:#1a1a1a;margin-bottom:16px;line-height:1.7;">
+{ai_brief.get('movers_update', 'No significant movers.')}
+</div>
+
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:32px;font-family:Arial,sans-serif;font-size:13px;">
+<tr style="background-color:#ebe7e1;"><td style="font-weight:700;">Ticker</td><td style="text-align:right;">Price</td><td style="text-align:right;">Change</td></tr>
+{movers_rows}
+</table>
+
+{earnings_table}
+
+<!-- BELL PLAN -->
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Bell Plan
+</h2>
+<div style="font-family:Georgia,serif;font-size:15px;color:#1a1a1a;margin-bottom:32px;line-height:1.7;">
+{ai_brief.get('bell_plan', 'Monitor market open.')}
+</div>
+
+<!-- FOOTER -->
+<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e8e3de;font-family:Arial,sans-serif;font-size:12px;color:#999;">
+    {data.get('holdings_count', 89)} holdings · {time_str} · Bell in ~40 min
+</div>
+
+</td></tr></table>
+"""
+    return html
+
+
+def format_premarket_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
+    """Format a concise pre-market iMessage teaser (single chunk)."""
+    snapshot = data.get("market_snapshot", {})
+    movers = data.get("premarket_movers", [])
+
+    now = datetime.now()
+    time_str = now.strftime("%I:%M %p PT").lstrip("0")
+
+    sp = snapshot.get("sp500_futures")
+    sp_chg = snapshot.get("sp500_change")
+    nq = snapshot.get("nasdaq_futures")
+    nq_chg = snapshot.get("nasdaq_change")
+    treas = snapshot.get("treasury_10y")
+    sp_str = f"S&P {sp:,.0f} ({sp_chg:+.1f}%)" if sp and sp_chg is not None else ""
+    nq_str = f"NQ {nq:,.0f} ({nq_chg:+.1f}%)" if nq and nq_chg is not None else ""
+    tr_str = f"10Y {treas:.2f}%" if treas else ""
+    mkt_line = " · ".join(x for x in [sp_str, nq_str, tr_str] if x)
+
+    mover_lines = ""
+    for m in movers[:3]:
+        sym = m.get("symbol", "?")
+        chg = m.get("change_pct", 0)
+        mover_lines += f"  {sym:<6} {chg:+.1f}%\n"
+
+    text = f"""PRE-MARKET · Bell in 40 min
+
+{mkt_line}
+
+▸ OPEN SIGNAL
+
+{ai_brief.get('open_signal', 'No significant changes since morning brief.')}
+
+TOP MOVERS:
+{mover_lines}
+───────────────────────────────
+{time_str} · Full brief → email
+"""
+    return text
+
+
+# ============================================================================
 # END OF FILE
 # ============================================================================
