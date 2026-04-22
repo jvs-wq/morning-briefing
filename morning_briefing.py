@@ -1022,8 +1022,9 @@ def fetch_portfolio_performance(api_key: str, tickers: list[str]) -> list[dict]:
                     try:
                         info = yf.Ticker(symbol).info
                         price = info.get(price_field)
-                        # No fallback: skip tickers without actual pre/post price
-                        prev_close = info.get("regularMarketPreviousClose")
+                        # Use regularMarketPrice (yesterday's actual close) as baseline,
+                        # NOT regularMarketPreviousClose which can be stale (2 days old)
+                        prev_close = info.get("regularMarketPrice")
                         if price and prev_close and prev_close != 0:
                             change_pct = ((price - prev_close) / prev_close) * 100
                             found_symbols.add(symbol)
