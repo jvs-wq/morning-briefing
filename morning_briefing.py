@@ -106,8 +106,8 @@ CONFIG = {
     "EMAIL_RECIPIENT": os.getenv("EMAIL_RECIPIENT", ""),
 
     # Holdings — combined personal (JVS) ∪ BCM portfolios
-    # Updated 2026-04-14 from SummPosn_Grp_JVS_Portfolio_031626.csv + BCM Top holdings 041326.xlsx
-    # Personal: 58 stocks + 10 ETFs | BCM-only additions: 16 stocks + 5 ETFs/funds | Combined: 74 stocks + 15 ETFs = 89 total
+    # Updated 2026-04-23 from SummPosn_Grp_JVS_Portfolio_042326.csv + BCM Top holdings 041326.xlsx (Sheet1)
+    # Personal: 55 stocks + 9 ETFs | BCM top holdings: 39 stocks + 5 ETFs/funds | Combined: 70 stocks + 14 ETFs = 84 total
     "INDIVIDUAL_STOCKS": [
         # --- Both personal & BCM ---
         "AAPL", "ABNB", "AMAT", "AMZN", "BAC", "C", "CMCSA", "COF", "DE", "ELV",
@@ -115,16 +115,16 @@ CONFIG = {
         "NVDA", "SCHW", "UBER", "VSNT", "WFC",
         # --- Personal only ---
         "ABCL", "ADDYY", "AFRM", "AMD", "ARCC", "ASML", "AVAV", "BMNR", "BRKB",
-        "CNH", "FCX", "GILD", "GLXY", "HIMS", "ISRG", "NBIS", "NFG", "NTR", "NU",
-        "ODD", "OUST", "PEYUF", "PLTR", "RIG", "RIO", "SNY", "SOFI", "TDW", "TSLA",
+        "CNH", "FCX", "GILD", "GLXY", "HIMS", "ISRG", "NBIS", "NFG", "NU",
+        "ODD", "OUST", "PEYUF", "PLTR", "RIG", "RIO", "SOFI", "TDW", "TSLA",
         "VGZ", "VWAPY", "WY", "ZETA",
         # --- BCM only (not in personal, but top holdings) ---
-        "BKR", "CHWY", "COST", "CTRA", "CVS", "DIS", "GOOGL", "GS", "IFF", "INVH",
+        "BKR", "CHWY", "COST", "CVS", "DIS", "GOOGL", "GS", "IFF",
         "JNJ", "JPM", "PFE", "SLB", "TROW", "UNP",
     ],
     "ETFS": [
         # --- Personal ETFs ---
-        "CSRE", "DFAS", "DFCF", "DFEM", "DFEV", "DVYE", "GDX", "GDXJ", "URNM", "VCRB",
+        "CSRE", "DFAS", "DFEM", "DFEV", "DVYE", "GDX", "GDXJ", "URNM", "UVXY",
         # --- BCM ETFs/funds ---
         "AKRE", "IBB", "VDE", "VGHAX", "XLE",
     ],
@@ -870,17 +870,18 @@ def fetch_premarket_movers(api_key: str, tickers: list[str], threshold: float = 
             detected_market_state = market_state
             print(f"    Market state: {market_state}")
 
-            if market_state in ("PRE", "POST", "PREPRE", "POSTPOST"):
-                price_field = "preMarketPrice" if "PRE" in market_state else "postMarketPrice"
-                change_field = "preMarketChangePercent" if "PRE" in market_state else "postMarketChangePercent"
-
+            # fetch_premarket_movers is called from PRE-market flows (5 AM morning, 6:20 AM
+            # premarket). If it somehow runs during POST (manual invocation), fall through to
+            # Phase 2/3 — don't conflate after-hours movement with the day's move like the
+            # 2026-04-23 recap bug did.
+            if market_state in ("PRE", "PREPRE"):
                 for symbol in tickers:
                     try:
                         info = yf.Ticker(symbol).info
-                        price = info.get(price_field)
-                        # Use regularMarketPrice (yesterday's actual close) as baseline,
-                        # NOT regularMarketPreviousClose which can be stale (2 days old)
-                        # early in pre-market before Yahoo updates the field.
+                        price = info.get("preMarketPrice")
+                        # During PRE, regularMarketPrice is yesterday's settlement close —
+                        # the correct baseline for pre-market % moves. regularMarketPreviousClose
+                        # can be 2 days stale early in pre-market.
                         prev_close = info.get("regularMarketPrice")
                         if price and prev_close and prev_close != 0:
                             change_pct = ((price - prev_close) / prev_close) * 100
@@ -897,7 +898,7 @@ def fetch_premarket_movers(api_key: str, tickers: list[str], threshold: float = 
                         continue
 
                 if found_symbols:
-                    print(f"    yfinance: got {market_state.lower()} prices for {len(found_symbols)} tickers")
+                    print(f"    yfinance: got pre-market prices for {len(found_symbols)} tickers")
 
         except Exception as e:
             print(f"    Warning: yfinance premarket error: {e}")
@@ -1019,54 +1020,85 @@ def fetch_portfolio_performance(api_key: str, tickers: list[str]) -> list[dict]:
             market_state = probe.get("marketState", "REGULAR")
             detected_market_state = market_state
 
-            if market_state in ("PRE", "POST", "PREPRE", "POSTPOST"):
-                price_field = "preMarketPrice" if "PRE" in market_state else "postMarketPrice"
+            # PRE-market: price = preMarketPrice, baseline = regularMarketPrice (yesterday's close,
+            #   since today's regular session hasn't opened yet).
+            # POST-market: we want the DAY's move, not the after-hours move. So price = today's
+            #   settlement close (regularMarketPrice during POST), baseline = yesterday's close
+            #   (regularMarketPreviousClose). postMarketPrice is AFTER-HOURS noise and must NOT
+            #   be used for the day's % change. Using it here caused the 2026-04-23 DIS bug where
+            #   a thin after-hours print showed up as a +3.42% "day move" in the recap.
+            if market_state in ("PRE", "PREPRE"):
                 for symbol in tickers:
                     try:
                         info = yf.Ticker(symbol).info
-                        price = info.get(price_field)
-                        # Use regularMarketPrice (yesterday's actual close) as baseline,
-                        # NOT regularMarketPreviousClose which can be stale (2 days old)
+                        price = info.get("preMarketPrice")
                         prev_close = info.get("regularMarketPrice")
                         if price and prev_close and prev_close != 0:
                             change_pct = ((price - prev_close) / prev_close) * 100
                             found_symbols.add(symbol)
                             performance.append({
-                                "symbol": symbol,
-                                "price": price,
-                                "change_pct": change_pct,
-                                "volume": 0,
-                                "day_high": None,
-                                "day_low": None,
-                                "year_high": None,
-                                "year_low": None,
-                                "at_52w_high": False,
-                                "at_52w_low": False,
+                                "symbol": symbol, "price": price, "change_pct": change_pct,
+                                "volume": 0, "day_high": None, "day_low": None,
+                                "year_high": None, "year_low": None,
+                                "at_52w_high": False, "at_52w_low": False,
                             })
                     except Exception:
                         continue
                 if found_symbols:
-                    print(f"  yfinance: got {market_state.lower()} prices for {len(found_symbols)} tickers")
+                    print(f"  yfinance: got pre-market prices for {len(found_symbols)} tickers")
+            elif market_state in ("POST", "POSTPOST", "CLOSED"):
+                for symbol in tickers:
+                    try:
+                        info = yf.Ticker(symbol).info
+                        price = info.get("regularMarketPrice")           # today's settlement close
+                        prev_close = info.get("regularMarketPreviousClose")  # yesterday's close
+                        if price and prev_close and prev_close != 0:
+                            change_pct = ((price - prev_close) / prev_close) * 100
+                            found_symbols.add(symbol)
+                            performance.append({
+                                "symbol": symbol, "price": price, "change_pct": change_pct,
+                                "volume": 0, "day_high": None, "day_low": None,
+                                "year_high": None, "year_low": None,
+                                "at_52w_high": False, "at_52w_low": False,
+                            })
+                    except Exception:
+                        continue
+                if found_symbols:
+                    print(f"  yfinance: got post-close settlement prices for {len(found_symbols)} tickers")
         except Exception as e:
             print(f"  Warning: yfinance portfolio error: {e}")
 
-    # Phase 2: Yahoo spark fallback (batch, fast) — ONLY during regular hours.
-    # During PRE/POST, spark range=1d returns yesterday's candles, not today's premarket.
+    # Phase 2: Yahoo spark fallback (batch, fast).
+    # REGULAR hours: intraday bars with includePrePost=true (last bar is current price).
+    # POST hours: range=5d&interval=1d gives two settlement closes; last bar is today, prior is
+    #   yesterday — used to cover any holdings Phase 1 missed during POST.
+    # PRE hours: do NOT run spark — chart range=1d returns yesterday's regular candles, which
+    #   would give a flat 0% change. Phase 1 or Phase 3 (FMP) handle pre-market.
     spark_tickers = [t for t in tickers if t not in found_symbols]
-    if spark_tickers and detected_market_state == "REGULAR":
+    if spark_tickers and detected_market_state in ("REGULAR", "POST", "POSTPOST", "CLOSED"):
         try:
             headers = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"}
+            is_post = detected_market_state != "REGULAR"
+            spark_params = ("range=5d&interval=1d&includePrePost=false"
+                            if is_post else "range=1d&interval=5m&includePrePost=true")
             for i in range(0, len(spark_tickers), 20):
                 batch = spark_tickers[i:i+20]
                 symbols = ",".join(batch)
                 url = (f"https://query2.finance.yahoo.com/v8/finance/spark?symbols={symbols}"
-                       f"&range=1d&interval=5m&includePrePost=true")
+                       f"&{spark_params}")
                 resp = requests.get(url, headers=headers, timeout=15)
                 if resp.status_code == 200:
                     data = resp.json()
                     for symbol, info in data.items():
                         close_prices = [c for c in (info.get("close") or []) if c is not None]
-                        prev_close = info.get("chartPreviousClose")
+                        # REGULAR-hours path: chartPreviousClose is yesterday's close — use it.
+                        # POST-hours path (range=5d&interval=1d): chartPreviousClose is 5-6 days
+                        #   ago; we need closes[-2] as yesterday's settlement close. Confirmed
+                        #   empirically — using chartPreviousClose would give a multi-day % change.
+                        if is_post:
+                            prev_close = close_prices[-2] if len(close_prices) >= 2 else None
+                        else:
+                            prev_close = info.get("chartPreviousClose")
                         if close_prices and prev_close and prev_close != 0:
                             price = close_prices[-1]
                             change_pct = ((price - prev_close) / prev_close) * 100
@@ -1175,6 +1207,10 @@ def fetch_portfolio_performance(api_key: str, tickers: list[str]) -> list[dict]:
 
 DRIFT_TOLERANCE_PCT = 0.10      # Anything within this is "consensus"
 MATERIAL_DRIFT_PCT = 0.50       # Anything beyond this surfaces in the brief
+CHANGE_PCT_DRIFT_TOLERANCE = 0.50  # Absolute difference in day %-change (percentage points);
+                                    # >0.50pp between yfinance's change_pct and Finnhub's dp means
+                                    # the two sources disagree on the size of the day's move and
+                                    # we should prefer Finnhub (primary settlement feed).
 
 def verify_portfolio_closes(portfolio_perf: list[dict], finnhub_key: str) -> dict:
     """
@@ -1260,17 +1296,42 @@ def verify_portfolio_closes(portfolio_perf: list[dict], finnhub_key: str) -> dic
             p["finnhub_change_pct"] = float(fh_change_pct) if isinstance(fh_change_pct, (int, float)) else None
             p["drift_pct"] = float(drift)
             p["drift_direction"] = direction
-            if drift <= DRIFT_TOLERANCE_PCT:
+
+            # % change drift — catches the 2026-04-23 DIS case where yf's change_pct was built
+            # from an after-hours baseline while Finnhub's dp reflected the true day move.
+            yf_change = p.get("change_pct")
+            fh_dp = p["finnhub_change_pct"]
+            change_pct_drift = (abs(yf_change - fh_dp)
+                                if isinstance(yf_change, (int, float)) and isinstance(fh_dp, (int, float))
+                                else None)
+            p["change_pct_drift"] = change_pct_drift
+
+            price_drift_material = drift >= MATERIAL_DRIFT_PCT
+            pct_drift_material = (change_pct_drift is not None
+                                   and change_pct_drift >= CHANGE_PCT_DRIFT_TOLERANCE)
+
+            if price_drift_material or pct_drift_material:
+                # Prefer Finnhub's settlement close + dp; yfinance is having a bad print.
+                # We trust Finnhub here because /quote `c` is the official close and `dp` is
+                # computed by Finnhub against its own `pc`, so both fields are internally
+                # consistent. Keep the original yfinance values for audit/drift reporting.
+                p["yfinance_price"] = float(yf_price)
+                p["yfinance_change_pct"] = float(yf_change) if isinstance(yf_change, (int, float)) else None
+                p["price"] = float(fh_close)
+                if isinstance(fh_dp, (int, float)):
+                    p["change_pct"] = float(fh_dp)
+                p["verified_source"] = "finnhub_preferred"
+                counts["drift"] += 1
+                counts["material_drift"] += 1
+                counts["flagged_symbols"].append(
+                    (symbol, float(drift), float(yf_price), float(fh_close))
+                )
+            elif drift <= DRIFT_TOLERANCE_PCT:
                 p["verified_source"] = "consensus"
                 counts["consensus"] += 1
             else:
                 p["verified_source"] = "drift"
                 counts["drift"] += 1
-                if drift >= MATERIAL_DRIFT_PCT:
-                    counts["material_drift"] += 1
-                    counts["flagged_symbols"].append(
-                        (symbol, float(drift), float(yf_price), float(fh_close))
-                    )
 
         # Respect Finnhub free-tier rate limit (60/min)
         time.sleep(1.1)
@@ -3784,9 +3845,44 @@ def run_premarket_update():
     finnhub_upcoming = fetch_finnhub_earnings(CONFIG["FINNHUB_API_KEY"], ticker_set)
     print(f"  Found {len(finnhub_upcoming)} earnings events")
 
+    # Grade BMO prints that already dropped (e.g. UNP ~7:45 AM ET, well before 6:20 AM PT brief)
+    today_str = datetime.now().strftime("%Y-%m-%d")
+    bmo_today = {e["symbol"] for e in finnhub_upcoming
+                 if e.get("date") == today_str and e.get("hour") == "bmo"}
+    just_reported: list[dict] = []
+    if bmo_today:
+        print(f"\n[3b/5] Checking BMO actuals for {len(bmo_today)} reporters...")
+        fh_actuals = fetch_earnings_scorecard(CONFIG["FINNHUB_API_KEY"], bmo_today)
+        fh_found = {r["symbol"] for r in fh_actuals if r.get("date") == today_str}
+        yf_actuals = fetch_yfinance_earnings(bmo_today, fh_found) if (bmo_today - fh_found) else []
+        yf_today = [r for r in yf_actuals if r.get("date") == today_str]
+        all_found = fh_found | {r["symbol"] for r in yf_today}
+        still_missing = bmo_today - all_found
+        av_actuals = (fetch_alpha_vantage_earnings(CONFIG["ALPHA_VANTAGE_API_KEY"], still_missing)
+                      if still_missing else [])
+        av_today = [r for r in av_actuals if r.get("date") == today_str]
+        merged = merge_earnings_data(fh_actuals, [], None, yf_today, None, av_today)
+        just_reported = [r for r in merged if r.get("date") == today_str]
+        print(f"  Graded {len(just_reported)}/{len(bmo_today)} BMO prints")
+
+    # Drop graded tickers from the upcoming list — they're printed, not pending
+    graded_symbols = {r["symbol"] for r in just_reported}
+    if graded_symbols:
+        finnhub_upcoming = [e for e in finnhub_upcoming if e["symbol"] not in graded_symbols]
+
     # Load earnings history for scorecard context
     print("\n[4/5] Loading earnings history...")
     earnings_history = load_earnings_history(CONFIG["EARNINGS_HISTORY_FILE"])
+
+    # Persist today's BMO prints so the 2 PM recap + tomorrow's 5 AM brief see them
+    if just_reported:
+        just_reported = merge_with_history(just_reported, earnings_history)
+        # merge_with_history adds all historical entries; keep only today's prints for the briefing data
+        just_reported = [r for r in just_reported if r.get("date") == today_str
+                         and r.get("symbol") in graded_symbols]
+        save_earnings_history(CONFIG["EARNINGS_HISTORY_FILE"], just_reported, earnings_history)
+        earnings_history = load_earnings_history(CONFIG["EARNINGS_HISTORY_FILE"])
+
     scorecard = list(earnings_history.get("entries", {}).values())
     scorecard.sort(key=lambda x: x.get("date", ""), reverse=True)
     print(f"  {len(scorecard)} recent earnings in history")
@@ -3797,6 +3893,7 @@ def run_premarket_update():
         "premarket_movers": premarket_movers,
         "earnings": finnhub_upcoming,
         "scorecard": scorecard,
+        "just_reported": just_reported,
         "holdings_count": len(all_tickers),
     }
 

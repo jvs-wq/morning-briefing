@@ -402,9 +402,12 @@ def _build_recap_ai_payload(data: dict[str, Any]) -> str:
         price_str = f"${price:.2f}" if isinstance(price, (int, float)) else "?"
         chg_str = f"{'+' if isinstance(chg,(int,float)) and chg>=0 else ''}{chg:.2f}%" if isinstance(chg,(int,float)) else "?"
         drift_tag = ""
-        if p.get("verified_source") == "drift" and p.get("drift_pct"):
-            drift_tag = f" [DRIFT {p['drift_pct']:.2f}%]"
-        elif p.get("verified_source") == "yfinance_only":
+        vs = p.get("verified_source")
+        if vs == "finnhub_preferred":
+            drift_tag = " [corrected — yfinance disagreed]"
+        elif vs == "drift" and p.get("drift_pct"):
+            drift_tag = f" [drift {p['drift_pct']:.2f}%]"
+        elif vs == "yfinance_only":
             drift_tag = " [single-source]"
         return f"- {s}: {price_str} ({chg_str}){drift_tag}"
 
@@ -461,7 +464,8 @@ def _build_recap_ai_payload(data: dict[str, Any]) -> str:
             news_lines.append(f"  Summary: {summary[:200]}")
     news_block = "\n".join(news_lines) if news_lines else "- No material news today"
 
-    # Data quality summary
+    # Data quality summary — numbers above ALREADY reflect Finnhub corrections when yfinance
+    # disagreed materially. No hedging needed in prose.
     dq_line = ""
     if data_quality:
         dq_parts = []
@@ -471,12 +475,15 @@ def _build_recap_ai_payload(data: dict[str, Any]) -> str:
             dq_parts.append(f"drift>{DRIFT_TOLERANCE_PCT}%={data_quality.get('drift', 0)}")
             dq_parts.append(f"material(>{MATERIAL_DRIFT_PCT}%)={data_quality.get('material_drift', 0)}")
         if dq_parts:
-            dq_line = f"\nPRICE VERIFICATION (yfinance vs Finnhub cross-check): {' · '.join(dq_parts)}\n"
+            dq_line = (f"\nPRICE VERIFICATION (yfinance vs Finnhub cross-check): {' · '.join(dq_parts)}\n"
+                       "NOTE: Prices and % changes above have ALREADY been corrected to Finnhub's "
+                       "settlement close for any holding where yfinance disagreed materially. Treat the "
+                       "numbers as authoritative; do not hedge magnitudes in your prose.\n")
         flagged = data_quality.get("flagged_symbols") or []
         if flagged:
-            dq_line += "Materially drifted holdings:\n"
+            dq_line += "Corrected holdings (yfinance raw → Finnhub used):\n"
             for sym, drift, yf_p, fh_p in flagged[:8]:
-                dq_line += f"- {sym}: yfinance ${yf_p:.2f} vs Finnhub ${fh_p:.2f} ({drift:.2f}% drift)\n"
+                dq_line += f"- {sym}: raw yfinance ${yf_p:.2f} → using Finnhub ${fh_p:.2f} ({drift:.2f}% price gap)\n"
 
     payload = f"""MARKET CLOSE (today, {datetime.now().strftime('%A %b %d')}):
 {mc_block}
@@ -1125,7 +1132,10 @@ def format_market_recap_html(data, ai_brief=None):
             sign = "+" if chg >= 0 else ""
             drift_tag = ""
             vs = p.get("verified_source")
-            if vs == "drift" and p.get("drift_pct"):
+            if vs == "finnhub_preferred":
+                _d = p.get("drift_pct") or 0
+                drift_tag = f' <span style="color:#27ae60; font-size: 10px;" title="yfinance disagreed by {_d:.2f}% — using Finnhub settlement close">&#x2713;</span>'
+            elif vs == "drift" and p.get("drift_pct"):
                 _d = p.get("drift_pct") or 0
                 drift_tag = f' <span style="color:#b7950b; font-size: 10px;" title="{_d:.2f}% drift vs Finnhub">&#x26A0;</span>'
             elif vs == "yfinance_only":
@@ -1308,9 +1318,9 @@ def format_market_recap_html(data, ai_brief=None):
             for sym, d, yf_p, fh_p in flagged[:8]:
                 rows += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 8px; font-weight: 700;">{sym}</td><td style="padding: 8px; text-align: right; font-variant-numeric: tabular-nums;">${yf_p:.2f}</td><td style="padding: 8px; text-align: right; font-variant-numeric: tabular-nums;">${fh_p:.2f}</td><td style="padding: 8px; text-align: right; color:#b7950b; font-weight: 600;">{d:.2f}%</td></tr>'
             flagged_html = f'''<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #fefaf0; border: 1px solid #e8d9b0; margin-top: 12px; font-family: Arial, sans-serif; font-size: 12px;">
-<tr style="background-color: #f7ecd0;"><td style="padding: 8px; font-weight: 700;">Ticker</td><td style="padding: 8px; font-weight: 700; text-align: right;">yfinance</td><td style="padding: 8px; font-weight: 700; text-align: right;">Finnhub</td><td style="padding: 8px; font-weight: 700; text-align: right;">Drift</td></tr>
+<tr style="background-color: #f7ecd0;"><td style="padding: 8px; font-weight: 700;">Ticker</td><td style="padding: 8px; font-weight: 700; text-align: right;">yfinance (raw)</td><td style="padding: 8px; font-weight: 700; text-align: right;">Finnhub (used)</td><td style="padding: 8px; font-weight: 700; text-align: right;">Drift</td></tr>
 {rows}</table>
-<div style="font-family: Arial, sans-serif; font-size: 11px; color: #999; margin-top: 6px;">Prices shown in this brief use yfinance as the primary source. Flagged rows indicate where Finnhub disagreed materially.</div>'''
+<div style="font-family: Arial, sans-serif; font-size: 11px; color: #999; margin-top: 6px;">Flagged rows were corrected to Finnhub's settlement close before the brief was written. yfinance figures shown for audit only.</div>'''
         dq_footer = f'''<h3 style="font-family: Arial, sans-serif; font-size: 12px; font-weight: 700; color: #666; margin: 32px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">Data Quality</h3>
 <div style="font-family: Arial, sans-serif; font-size: 12px; color: #444; line-height: 1.55; padding: 12px 14px; background-color: #fefaf0; border-left: 3px solid {dq_status_color};">{dq_body}</div>
 {flagged_html}'''
@@ -1742,7 +1752,8 @@ def format_recap_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
             sym = p.get("symbol", "")
             price = p.get("price", 0) or 0
             chg = p.get("change_pct", 0) or 0
-            drift = " ⚠" if p.get("verified_source") == "drift" else ""
+            vs = p.get("verified_source")
+            drift = " ✓" if vs == "finnhub_preferred" else (" ⚠" if vs == "drift" else "")
             text += f"  ▲ {sym:<6} ${price:>8,.2f}  +{chg:.2f}%{drift}\n"
     if losers:
         text += "\nTOP LOSERS:\n"
@@ -1750,7 +1761,8 @@ def format_recap_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
             sym = p.get("symbol", "")
             price = p.get("price", 0) or 0
             chg = p.get("change_pct", 0) or 0
-            drift = " ⚠" if p.get("verified_source") == "drift" else ""
+            vs = p.get("verified_source")
+            drift = " ✓" if vs == "finnhub_preferred" else (" ⚠" if vs == "drift" else "")
             text += f"  ▼ {sym:<6} ${price:>8,.2f}  {chg:.2f}%{drift}\n"
 
     # Summary
@@ -1837,9 +1849,9 @@ WRITING DISCIPLINE:
 
 OUTPUT STRUCTURE (return as valid JSON with these exact keys):
 {
-  "open_signal": "1-2 paragraphs. The single most important thing for the open. What moved since the morning brief, and what it means for positioning. If an earnings print just dropped, grade it. If futures shifted, explain why.",
+  "open_signal": "1-2 paragraphs. The single most important thing for the open. If any BMO earnings prints dropped between the 5 AM brief and now (see JUST PRINTED section), grade them first — actual vs. estimate, revenue beat/miss, guidance if visible in the pre-market reaction. That is the most important delta. Otherwise, what moved in futures/pre-market and what it means for positioning.",
   "movers_update": "Quick-hit read on the top pre-market movers. 2-3 sentences connecting the moves to portfolio themes. Skip anything already covered in the morning brief unless the magnitude changed materially.",
-  "bell_plan": "2-3 specific things to do or watch at the open. Levels, catalysts, and tactical setups. 'If SOFI opens above $18, the breakout is real — size up.' Not 'watch SOFI.' Include any earnings reporting BMO that weren't available at 5 AM."
+  "bell_plan": "2-3 specific things to do or watch at the open. Levels, catalysts, and tactical setups. 'If SOFI opens above $18, the breakout is real — size up.' Not 'watch SOFI.' Include any BMO earnings still pending and what matters in the release."
 }"""
 
 
@@ -1852,6 +1864,7 @@ def generate_ai_premarket_brief(data: dict[str, Any], api_key: str) -> dict[str,
     movers = data.get("premarket_movers", [])
     earnings = data.get("earnings", [])
     scorecard = data.get("scorecard", [])
+    just_reported = data.get("just_reported", [])
 
     payload = "PRE-MARKET DATA (6:20 AM PT — bell in 40 min):\n\n"
 
@@ -1868,6 +1881,30 @@ def generate_ai_premarket_brief(data: dict[str, Any], api_key: str) -> dict[str,
     if treas:
         payload += f"- 10Y Treasury: {treas:.3f}%\n"
 
+    if just_reported:
+        payload += "\n*** JUST PRINTED (BMO actuals, out since the 5 AM brief) — grade these first: ***\n"
+        for r in just_reported:
+            sym = r.get("symbol", "?")
+            eps_a = r.get("eps_actual")
+            eps_e = r.get("eps_estimate")
+            surp = r.get("surprise_pct")
+            rev_a = r.get("rev_actual")
+            rev_e = r.get("rev_estimate")
+            rev_surp = r.get("rev_surprise_pct")
+            beat = "BEAT" if r.get("beat") else "MISS"
+            line = f"- {sym}: {beat}"
+            if isinstance(eps_a, (int, float)) and isinstance(eps_e, (int, float)):
+                line += f" EPS ${eps_a:.2f} vs ${eps_e:.2f} est"
+                if isinstance(surp, (int, float)):
+                    line += f" ({surp:+.1f}%)"
+            if isinstance(rev_a, (int, float)) and isinstance(rev_e, (int, float)) and rev_e > 0:
+                rev_tag = "BEAT" if r.get("rev_beat") else "MISS"
+                line += f" | Rev ${rev_a/1e9:.2f}B vs ${rev_e/1e9:.2f}B ({rev_tag}"
+                if isinstance(rev_surp, (int, float)):
+                    line += f", {rev_surp:+.1f}%"
+                line += ")"
+            payload += line + "\n"
+
     payload += "\nPRE-MARKET MOVERS (portfolio holdings):\n"
     if movers:
         for m in movers[:15]:
@@ -1878,9 +1915,9 @@ def generate_ai_premarket_brief(data: dict[str, Any], api_key: str) -> dict[str,
     today_str = datetime.now().strftime("%Y-%m-%d")
     todays = [e for e in earnings if e.get("date") == today_str]
     if todays:
-        payload += "\nREPORTING TODAY:\n"
+        payload += "\nSTILL TO REPORT TODAY:\n"
         for e in todays:
-            timing = "pre" if e.get("hour") == "bmo" else "post" if e.get("hour") == "amc" else "?"
+            timing = "pre (pending)" if e.get("hour") == "bmo" else "post" if e.get("hour") == "amc" else "?"
             eps = e.get("eps_estimate")
             rev = e.get("revenue_estimate")
             eps_str = f" EPS ${eps:.2f}" if eps else ""
@@ -1932,6 +1969,7 @@ def format_premarket_html(ai_brief: dict[str, str], data: dict[str, Any]) -> str
     movers = data.get("premarket_movers", [])
     earnings = data.get("earnings", [])
     scorecard = data.get("scorecard", [])
+    just_reported = data.get("just_reported", [])
 
     now = datetime.now()
     date_str = now.strftime("%B %d, %Y")
@@ -1982,11 +2020,54 @@ def format_premarket_html(ai_brief: dict[str, str], data: dict[str, Any]) -> str
     if earnings_rows:
         earnings_table = f"""
 <h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:32px 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
-Reporting Today
+Still to Report Today
 </h2>
 <table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Arial,sans-serif;font-size:13px;">
 <tr style="background-color:#ebe7e1;"><td style="font-weight:700;">Ticker</td><td>Timing</td><td style="text-align:right;">Est. EPS</td><td style="text-align:right;">Est. Rev</td></tr>
 {earnings_rows}
+</table>
+"""
+
+    # Just-printed BMO actuals (dropped between 5 AM brief and this 6:20 AM update)
+    just_reported_table = ""
+    if just_reported:
+        jr_rows = ""
+        for r in just_reported:
+            sym = r.get("symbol", "?")
+            beat = r.get("beat")
+            beat_tag = "BEAT" if beat else "MISS"
+            beat_color = "#27ae60" if beat else "#c0392b"
+            eps_a = r.get("eps_actual")
+            eps_e = r.get("eps_estimate")
+            surp = r.get("surprise_pct")
+            eps_cell = "—"
+            if isinstance(eps_a, (int, float)) and isinstance(eps_e, (int, float)):
+                eps_cell = f"${eps_a:.2f} vs ${eps_e:.2f}"
+                if isinstance(surp, (int, float)):
+                    eps_cell += f" ({surp:+.1f}%)"
+            rev_a = r.get("rev_actual")
+            rev_e = r.get("rev_estimate")
+            rev_surp = r.get("rev_surprise_pct")
+            rev_cell = "—"
+            if isinstance(rev_a, (int, float)) and isinstance(rev_e, (int, float)) and rev_e > 0:
+                rev_cell = f"${rev_a/1e9:.2f}B vs ${rev_e/1e9:.2f}B"
+                if isinstance(rev_surp, (int, float)):
+                    rev_cell += f" ({rev_surp:+.1f}%)"
+            jr_rows += (
+                f'<tr style="border-bottom:1px solid #e8e3de;">'
+                f'<td style="font-weight:700;">{sym}</td>'
+                f'<td style="color:{beat_color};font-weight:700;">{beat_tag}</td>'
+                f'<td style="text-align:right;">{eps_cell}</td>'
+                f'<td style="text-align:right;">{rev_cell}</td>'
+                f'</tr>'
+            )
+        just_reported_table = f"""
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:32px 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Just Printed (BMO)
+</h2>
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Arial,sans-serif;font-size:13px;">
+<tr style="background-color:#ebe7e1;"><td style="font-weight:700;">Ticker</td><td>EPS</td><td style="text-align:right;">EPS Actual vs Est.</td><td style="text-align:right;">Revenue Actual vs Est.</td></tr>
+{jr_rows}
 </table>
 """
 
@@ -2027,6 +2108,8 @@ Pre-Market Movers
 {movers_rows}
 </table>
 
+{just_reported_table}
+
 {earnings_table}
 
 <!-- BELL PLAN -->
@@ -2039,7 +2122,7 @@ Bell Plan
 
 <!-- FOOTER -->
 <div style="margin-top:32px;padding-top:16px;border-top:1px solid #e8e3de;font-family:Arial,sans-serif;font-size:12px;color:#999;">
-    {data.get('holdings_count', 89)} holdings · {time_str} · Bell in ~40 min
+    {data.get('holdings_count', 84)} holdings · {time_str} · Bell in ~40 min
 </div>
 
 </td></tr></table>
