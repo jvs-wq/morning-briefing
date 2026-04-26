@@ -1047,24 +1047,48 @@ def fetch_portfolio_performance(api_key: str, tickers: list[str]) -> list[dict]:
                 if found_symbols:
                     print(f"  yfinance: got pre-market prices for {len(found_symbols)} tickers")
             elif market_state in ("POST", "POSTPOST", "CLOSED"):
-                for symbol in tickers:
-                    try:
-                        info = yf.Ticker(symbol).info
-                        price = info.get("regularMarketPrice")           # today's settlement close
-                        prev_close = info.get("regularMarketPreviousClose")  # yesterday's close
-                        if price and prev_close and prev_close != 0:
+                # Single batch yf.download covers both today/yesterday close AND the
+                # 52-week window — replaces 84 sequential .info calls with one request.
+                # Phase 1.5 enrichment below skips any ticker we already filled here.
+                try:
+                    df_post = yf.download(" ".join(tickers), period="1y",
+                                          progress=False, threads=True)
+                except Exception as e:
+                    print(f"  Warning: yfinance batch error: {e}")
+                    df_post = None
+
+                if df_post is not None and not df_post.empty:
+                    multi = len(tickers) > 1
+                    for symbol in tickers:
+                        try:
+                            close = df_post["Close"][symbol] if multi else df_post["Close"]
+                            close = close.dropna()
+                            if len(close) < 2:
+                                continue
+                            price = float(close.iloc[-1])
+                            prev_close = float(close.iloc[-2])
+                            if not price or not prev_close:
+                                continue
+                            high = (df_post["High"][symbol] if multi else df_post["High"]).dropna()
+                            low = (df_post["Low"][symbol] if multi else df_post["Low"]).dropna()
+                            vol = (df_post["Volume"][symbol] if multi else df_post["Volume"]).dropna()
+                            year_high = float(high.max()) if len(high) else None
+                            year_low = float(low.min()) if len(low) else None
+                            volume = int(vol.iloc[-1]) if len(vol) else 0
                             change_pct = ((price - prev_close) / prev_close) * 100
                             found_symbols.add(symbol)
                             performance.append({
                                 "symbol": symbol, "price": price, "change_pct": change_pct,
-                                "volume": 0, "day_high": None, "day_low": None,
-                                "year_high": None, "year_low": None,
-                                "at_52w_high": False, "at_52w_low": False,
+                                "volume": volume,
+                                "day_high": None, "day_low": None,
+                                "year_high": year_high, "year_low": year_low,
+                                "at_52w_high": bool(year_high and price >= year_high * 0.99),
+                                "at_52w_low":  bool(year_low  and price <= year_low  * 1.01),
                             })
-                    except Exception:
-                        continue
+                        except Exception:
+                            continue
                 if found_symbols:
-                    print(f"  yfinance: got post-close settlement prices for {len(found_symbols)} tickers")
+                    print(f"  yfinance batch: got post-close prices for {len(found_symbols)} tickers")
         except Exception as e:
             print(f"  Warning: yfinance portfolio error: {e}")
 
@@ -1118,46 +1142,49 @@ def fetch_portfolio_performance(api_key: str, tickers: list[str]) -> list[dict]:
         except Exception as e:
             print(f"  Warning: Yahoo spark error: {e}")
 
-    # Phase 2: Enrich with 52-week data via yfinance if available
+    # Phase 2: Enrich with 52-week data via yfinance for tickers that came in
+    # without it (PRE-market path or spark/FMP fallbacks). The POST batch above
+    # already fills year_high/year_low, so those rows are skipped here.
     if YFINANCE_AVAILABLE and performance:
-        try:
-            import warnings
-            warnings.filterwarnings("ignore", category=FutureWarning)
-            syms = [p["symbol"] for p in performance]
-            ticker_str = " ".join(syms)
-            df = yf.download(ticker_str, period="1y", progress=False, threads=True)
-            if not df.empty:
-                perf_map = {p["symbol"]: p for p in performance}
-                for sym in syms:
-                    try:
-                        # Handle both single-ticker and multi-ticker DataFrame structures
-                        if len(syms) == 1:
-                            high_col = df['High']
-                            low_col = df['Low']
-                            vol_col = df['Volume']
-                        else:
-                            if sym not in df['High'].columns:
-                                continue
-                            high_col = df['High'][sym]
-                            low_col = df['Low'][sym]
-                            vol_col = df['Volume'][sym]
+        unenriched = [p for p in performance if p.get("year_high") is None]
+        if unenriched:
+            try:
+                import warnings
+                warnings.filterwarnings("ignore", category=FutureWarning)
+                syms = [p["symbol"] for p in unenriched]
+                ticker_str = " ".join(syms)
+                df = yf.download(ticker_str, period="1y", progress=False, threads=True)
+                if not df.empty:
+                    perf_map = {p["symbol"]: p for p in unenriched}
+                    for sym in syms:
+                        try:
+                            if len(syms) == 1:
+                                high_col = df['High']
+                                low_col = df['Low']
+                                vol_col = df['Volume']
+                            else:
+                                if sym not in df['High'].columns:
+                                    continue
+                                high_col = df['High'][sym]
+                                low_col = df['Low'][sym]
+                                vol_col = df['Volume'][sym]
 
-                        year_high = float(high_col.dropna().max())
-                        year_low = float(low_col.dropna().min())
-                        latest_vol = vol_col.dropna()
-                        volume = int(latest_vol.iloc[-1]) if len(latest_vol) > 0 else 0
+                            year_high = float(high_col.dropna().max())
+                            year_low = float(low_col.dropna().min())
+                            latest_vol = vol_col.dropna()
+                            volume = int(latest_vol.iloc[-1]) if len(latest_vol) > 0 else 0
 
-                        p = perf_map.get(sym)
-                        if p:
-                            p["year_high"] = year_high
-                            p["year_low"] = year_low
-                            p["volume"] = volume
-                            p["at_52w_high"] = p["price"] >= year_high * 0.99 if year_high else False
-                            p["at_52w_low"] = p["price"] <= year_low * 1.01 if year_low else False
-                    except Exception:
-                        continue
-        except Exception as e:
-            print(f"  Warning: yfinance 52-week data error: {e}")
+                            p = perf_map.get(sym)
+                            if p:
+                                p["year_high"] = year_high
+                                p["year_low"] = year_low
+                                p["volume"] = volume
+                                p["at_52w_high"] = p["price"] >= year_high * 0.99 if year_high else False
+                                p["at_52w_low"] = p["price"] <= year_low * 1.01 if year_low else False
+                        except Exception:
+                            continue
+            except Exception as e:
+                print(f"  Warning: yfinance 52-week data error: {e}")
 
     # Phase 3: FMP single-symbol fallback for any tickers we missed
     found_symbols = {p["symbol"] for p in performance}
@@ -3580,19 +3607,6 @@ def run_morning_briefing():
     analyst_actions = fetch_analyst_actions(None, ticker_set)
     total_actions = sum(len(v) for v in analyst_actions.values())
     print(f"  Found {total_actions} analyst actions across {len(analyst_actions)} tickers")
-
-    # LunarCrush calls — now separated from Alpha Vantage by FMP/Finnhub/yfinance work
-    print("\n[8/10] Checking social buzz (LunarCrush)...")
-    social_alerts = fetch_social_buzz(CONFIG["INDIVIDUAL_STOCKS"], CONFIG["LUNARCRUSH_API_KEY"], CONFIG["SOCIAL_BUZZ_THRESHOLD"])
-    print(f"  Found social data for {len(social_alerts)} tickers")
-
-    print("\n[8b/10] Checking creator signals (LunarCrush)...")
-    creator_signals = fetch_creator_signals(
-        CONFIG["CREATOR_WATCHLIST"],
-        CONFIG["LUNARCRUSH_API_KEY"],
-        CONFIG["INDIVIDUAL_STOCKS"]
-    )
-    print(f"  Got data for {len(creator_signals)} creators")
 
     print("\n[9/10] Filtering news with AI...")
     filtered_news = filter_news_with_ai(news, CONFIG["ANTHROPIC_API_KEY"])
