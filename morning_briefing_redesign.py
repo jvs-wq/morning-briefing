@@ -485,6 +485,25 @@ def _build_recap_ai_payload(data: dict[str, Any]) -> str:
             for sym, drift, yf_p, fh_p in flagged[:8]:
                 dq_line += f"- {sym}: raw yfinance ${yf_p:.2f} → using Finnhub ${fh_p:.2f} ({drift:.2f}% price gap)\n"
 
+    # Strategy reads — long-form analysts (Stratechery, Asianometry) covered today.
+    # Provided as awareness only; the email surfaces these to the reader directly.
+    # Do NOT summarize their prose — the prose is the value.
+    strategy_reads = data.get("strategy_reads", []) or []
+    strategy_block = ""
+    if strategy_reads:
+        sr_lines = []
+        for p in strategy_reads[:6]:
+            sr_lines.append(f"- [{p.get('source')}] {p.get('title', '')}")
+            ex = p.get("excerpt", "")
+            if ex:
+                sr_lines.append(f"  {ex[:220]}")
+        strategy_block = (
+            "\nSTRATEGY READS (long-form analysts published in last 48h — DO NOT summarize their prose; "
+            "they're surfaced separately in the email. Use only as context: if a piece overlaps with today's "
+            "tape or tomorrow's setup, you may reference it briefly by author, e.g. \"Thompson notes …\".):\n"
+            + "\n".join(sr_lines) + "\n"
+        )
+
     payload = f"""MARKET CLOSE (today, {datetime.now().strftime('%A %b %d')}):
 {mc_block}
 
@@ -507,7 +526,7 @@ RSI EXTREMES (oversold/52w low):
 
 MATERIAL NEWS (filtered for portfolio relevance):
 {news_block}
-{dq_line}
+{dq_line}{strategy_block}
 BRIEFING CONTEXT:
 - This is the post-close intelligence brief (2:00 PM PT / 5:00 PM ET)
 - Morning brief fired at 5:00 AM today with that day's hypothesis — use it implicitly: did the tape confirm or break it?
@@ -1257,6 +1276,49 @@ def format_market_recap_html(data, ai_brief=None):
     if ai.get("tomorrow_setup"):
         section_6 = _section_header(6, "TOMORROW'S SETUP") + _editorial_prose(ai["tomorrow_setup"])
 
+    # ---- 7. STRATEGY & ANALYSIS (Stratechery + Asianometry, 48h window) -----
+    # Section is omitted entirely on days with no new posts.
+    strategy_reads = data.get("strategy_reads", []) or []
+    section_7 = ""
+    if strategy_reads:
+        # Group by source, preserving newest-first order within each source
+        by_source = {}
+        for p in strategy_reads:
+            by_source.setdefault(p["source"], []).append(p)
+
+        items_html = ""
+        # Stable display order: Stratechery first, then Asianometry, then anything else
+        source_order = [s for s in ("Stratechery", "Asianometry") if s in by_source]
+        source_order += [s for s in by_source if s not in source_order]
+
+        for source in source_order:
+            for p in by_source[source]:
+                pub_iso = p.get("published_iso", "")
+                pub_label = ""
+                if pub_iso:
+                    try:
+                        pub_dt = datetime.fromisoformat(pub_iso)
+                        pub_label = pub_dt.strftime("%a %b %d")
+                    except (ValueError, TypeError):
+                        pub_label = pub_iso[:10]
+                title = (p.get("title") or "(untitled)").replace("<", "&lt;").replace(">", "&gt;")
+                excerpt = (p.get("excerpt") or "").replace("<", "&lt;").replace(">", "&gt;")
+                link = p.get("link") or "#"
+                source_color = "#c0392b" if source == "Stratechery" else "#1f6390"
+                items_html += f'''<div style="margin-bottom: 22px; padding-left: 14px; border-left: 3px solid {source_color};">
+    <div style="font-family: Arial, sans-serif; font-size: 10px; font-weight: 700; color: {source_color}; text-transform: uppercase; letter-spacing: 1.5px; margin-bottom: 4px;">
+        {source} &middot; {pub_label}
+    </div>
+    <div style="font-family: Georgia, serif; font-size: 16px; font-weight: 600; line-height: 1.35; margin-bottom: 6px;">
+        <a href="{link}" style="color: #1a1a1a; text-decoration: none;">{title}</a>
+    </div>
+    <div style="font-family: Georgia, serif; font-size: 14px; color: #444; line-height: 1.55;">
+        {excerpt}
+    </div>
+</div>
+'''
+        section_7 = _section_header(7, "STRATEGY &amp; ANALYSIS") + items_html
+
     # ---- APPENDIX: 52-Week extremes + RSI Watch -----------------------------
     highs_52w = [p for p in portfolio_perf if p.get("at_52w_high")]
     lows_52w = [p for p in portfolio_perf if p.get("at_52w_low")]
@@ -1377,6 +1439,7 @@ def format_market_recap_html(data, ai_brief=None):
 {section_4}
 {section_5}
 {section_6}
+{section_7}
 {appendix_block}
 
 <!-- FOOTER -->

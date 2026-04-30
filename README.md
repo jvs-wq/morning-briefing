@@ -27,6 +27,7 @@ Redesigned from plain-text data dump to AI-powered editorial brief. Claude Sonne
 - **Analyst actions** — sell-side upgrades/downgrades/PT changes (7-day window)
 - **AI-filtered news** — relevant headlines selected and interpreted by Claude API
 - **Social intelligence** — LunarCrush social buzz and creator signals with color-coded interpretive signals
+- **Strategy reads (recap only)** — long-form analyst posts (Stratechery, Asianometry) from the last 48h surfaced in a "Strategy & Analysis" section of the recap email, with GUID-deduped state so each post appears once
 - **HTML email** — professional typography with data appendix tables
 - **Plain text iMessage** — formatted for mobile, auto-chunks at ~1600 chars
 
@@ -64,6 +65,10 @@ earnings_history.json        — Persistent 4-week earnings lookback (gitignored
    ALPHA_VANTAGE_API_KEY=your_key
    IMESSAGE_RECIPIENT=+1234567890
    EMAIL_RECIPIENT=you@example.com
+   # Optional — recap "Strategy & Analysis" section. Paid Passport RSS URLs;
+   # leave blank to disable that section entirely.
+   STRATECHERY_RSS_URL=
+   ASIANOMETRY_RSS_URL=
    ```
 4. Edit the holdings lists in `morning_briefing.py` CONFIG section
 5. Run manually:
@@ -87,6 +92,8 @@ Uses LaunchAgent plists in `~/Library/LaunchAgents/` for automated scheduling.
 | Alpha Vantage | API key | RSI alerts, last-resort earnings |
 | FMP | API key | Pre-market movers fallback, portfolio performance |
 | LunarCrush | API key | Social buzz, creator signals |
+| Stratechery (Passport RSS) | Personal feed URL | Long-form tech-strategy posts in recap "Strategy & Analysis" section |
+| Asianometry (Passport RSS) | Personal feed URL | Long-form semiconductor / East Asia analysis in recap "Strategy & Analysis" section |
 
 ## Data Quality Notes
 

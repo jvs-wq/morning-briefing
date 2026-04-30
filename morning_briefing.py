@@ -140,6 +140,12 @@ CONFIG = {
 
     # Earnings history persistence (4-week rolling lookback)
     "EARNINGS_HISTORY_FILE": os.path.join(os.path.dirname(os.path.abspath(__file__)), "earnings_history.json"),
+
+    # Strategy reads (Stratechery + Asianometry, recap only) — paid Passport RSS, tokens in URL
+    "STRATECHERY_RSS_URL": os.getenv("STRATECHERY_RSS_URL", ""),
+    "ASIANOMETRY_RSS_URL": os.getenv("ASIANOMETRY_RSS_URL", ""),
+    "STRATEGY_READS_LOOKBACK_HOURS": 48,
+    "STRATEGY_READS_SEEN_FILE": os.path.join(os.path.dirname(os.path.abspath(__file__)), "strategy_reads_seen.json"),
 }
 
 # ============================================================================
@@ -2022,6 +2028,114 @@ def merge_earnings_data(finnhub_data: list[dict], fmp_data: list[dict],
 
 
 # ============================================================================
+# STRATEGY READS (Stratechery + Asianometry RSS — recap only)
+# ============================================================================
+#
+# Both feeds are paid Passport RSS — the URL itself contains a personal bearer
+# token, so URLs come from .env and are never logged. Article links also embed
+# a JWT (~30-day expiry) for paywall passthrough; same handling. We surface a
+# clean excerpt + link in the recap email; we do not store article bodies.
+
+def _load_strategy_seen(filepath: str) -> set:
+    """Load the set of GUIDs already surfaced. Empty set if file missing/corrupt."""
+    if not os.path.exists(filepath):
+        return set()
+    try:
+        with open(filepath) as f:
+            data = json.load(f)
+        return set(data.get("seen_guids", []))
+    except (json.JSONDecodeError, OSError):
+        return set()
+
+
+def _save_strategy_seen(filepath: str, seen: set) -> None:
+    """Persist the GUID set. Cap at 500 entries (FIFO via sorted) to keep file small."""
+    seen_list = sorted(seen)
+    if len(seen_list) > 500:
+        seen_list = seen_list[-500:]
+    try:
+        with open(filepath, "w") as f:
+            json.dump({"seen_guids": seen_list}, f, indent=2)
+    except OSError as e:
+        print(f"  ⚠ Could not save strategy_reads_seen: {e}")
+
+
+def fetch_strategy_reads(stratechery_url: str, asianometry_url: str,
+                         seen_file: str, lookback_hours: int = 48) -> list[dict]:
+    """
+    Fetch new posts from Stratechery + Asianometry RSS, deduped against seen_file.
+
+    Returns list of dicts with: source, title, link, published_iso, excerpt.
+    Posts older than lookback_hours OR already in seen_file are skipped.
+    Newly surfaced GUIDs are added to seen_file before return.
+    """
+    sources = [
+        ("Stratechery", stratechery_url),
+        ("Asianometry", asianometry_url),
+    ]
+    seen = _load_strategy_seen(seen_file)
+    cutoff = datetime.now().astimezone() - timedelta(hours=lookback_hours)
+    posts = []
+    new_guids = set()
+
+    for source_name, url in sources:
+        if not url:
+            continue
+        try:
+            parsed = feedparser.parse(url)
+        except Exception as e:
+            print(f"  ⚠ {source_name} feed parse failed: {type(e).__name__}")
+            continue
+        if parsed.bozo and not parsed.entries:
+            print(f"  ⚠ {source_name} feed returned no entries (bozo={parsed.bozo_exception.__class__.__name__ if parsed.bozo_exception else '?'})")
+            continue
+
+        for entry in parsed.entries:
+            guid = entry.get("id") or entry.get("guid") or entry.get("link", "")
+            if not guid or guid in seen:
+                continue
+
+            # Parse pub date
+            published_dt = None
+            if entry.get("published_parsed"):
+                try:
+                    published_dt = datetime(*entry.published_parsed[:6]).astimezone()
+                except (TypeError, ValueError):
+                    pass
+            elif entry.get("published"):
+                try:
+                    published_dt = parsedate_to_datetime(entry.published)
+                except (TypeError, ValueError):
+                    pass
+            if published_dt is None or published_dt < cutoff:
+                continue
+
+            # Excerpt: prefer the clean <description> over <content:encoded> HTML
+            excerpt_raw = entry.get("summary", "") or entry.get("description", "")
+            excerpt = re.sub(r"<[^>]+>", "", excerpt_raw).strip()
+            excerpt = re.sub(r"\s+", " ", excerpt)
+            if len(excerpt) > 320:
+                excerpt = excerpt[:317].rsplit(" ", 1)[0] + "…"
+
+            posts.append({
+                "source": source_name,
+                "title": entry.get("title", "(untitled)").strip(),
+                "link": entry.get("link", ""),
+                "published_iso": published_dt.isoformat(),
+                "excerpt": excerpt,
+            })
+            new_guids.add(guid)
+
+    # Persist before return so a failed render doesn't re-surface posts tomorrow
+    if new_guids:
+        _save_strategy_seen(seen_file, seen | new_guids)
+
+    # Newest first
+    posts.sort(key=lambda p: p["published_iso"], reverse=True)
+    return posts
+
+
+# ============================================================================
 # EARNINGS HISTORY PERSISTENCE (4-week rolling lookback)
 # ============================================================================
 
@@ -3759,6 +3873,23 @@ def run_market_recap():
     pending_count = len(ah_earnings) - reported_count
     print(f"  {len(ah_earnings)} AMC reporters (holdings): {reported_count} reported · {pending_count} pending")
 
+    # Strategy reads (Stratechery + Asianometry, 48h lookback, GUID-deduped)
+    print("\n[6.5/8] Fetching strategy reads (Stratechery + Asianometry RSS)...")
+    strategy_reads = fetch_strategy_reads(
+        CONFIG["STRATECHERY_RSS_URL"],
+        CONFIG["ASIANOMETRY_RSS_URL"],
+        CONFIG["STRATEGY_READS_SEEN_FILE"],
+        lookback_hours=CONFIG["STRATEGY_READS_LOOKBACK_HOURS"],
+    )
+    if strategy_reads:
+        by_source = {}
+        for p in strategy_reads:
+            by_source.setdefault(p["source"], 0)
+            by_source[p["source"]] += 1
+        print("  " + " · ".join(f"{src}: {n}" for src, n in by_source.items()))
+    else:
+        print("  No new posts in lookback window")
+
     # Bundle data for AI + formatters
     recap_data = {
         "market_close": market_close,
@@ -3768,6 +3899,7 @@ def run_market_recap():
         "rsi_alerts": rsi_alerts,
         "data_quality": dq_counts,
         "holdings_count": len(all_tickers),
+        "strategy_reads": strategy_reads,
     }
 
     # --- NEW: AI editorial brief ---
