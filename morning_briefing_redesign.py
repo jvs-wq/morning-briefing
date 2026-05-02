@@ -2234,5 +2234,268 @@ TOP MOVERS:
 
 
 # ============================================================================
+# SUNDAY-NIGHT WEEKEND PREVIEW (mode: weekend_preview)
+# ============================================================================
+
+WEEKEND_SYSTEM_PROMPT = """You are the senior portfolio analyst for a concentrated, high-conviction investment firm with ~$900M AUM. It is Sunday evening. The market reopens tomorrow morning. The CEO wants ONE brief that synthesizes the weekend — what happened, what Sunday futures are signaling, and the setup heading into Monday.
+
+PORTFOLIO CONTEXT:
+- PLTR is the anchor (~30%). Concentrated, high-conviction.
+- Priority holdings: PLTR, NVDA, TSLA, META, AMZN, GOOGL, AMD, SOFI, UBER, MSFT, AAPL, JPM, COST, ABNB, AFRM, HIMS, NU, ASML
+- CEO's principle: "Never be surprised by material events."
+
+WRITING DISCIPLINE:
+- This is NOT a pre-market brief. The market is closed. Do not pretend it opens in 40 minutes. The next session is Monday morning.
+- Lead with what genuinely moved over the weekend — geopolitics, regulatory action, M&A, preannouncements, macro data. If nothing material happened, say so plainly in one sentence and pivot to the Monday setup.
+- Sunday futures (open ~3 PM PT) are a sentiment gauge, not gospel. Use them as a directional signal, not a price prediction.
+- Be concise. Max 500 words across all sections. The CEO is reading this Sunday evening.
+- Connect weekend news to specific holdings when there is a real link. Don't manufacture connections.
+
+OUTPUT STRUCTURE (return as valid JSON with these exact keys):
+{
+  "weekend_takeaway": "1-2 paragraphs. The single most important thing from the weekend that affects positioning Monday. If genuinely quiet, say so and explain what that means (e.g., 'no catalysts, market will trade off Friday's setup and Monday's economic releases').",
+  "monday_setup": "2-3 sentences on how Sunday futures are positioning Monday's open and which holdings are most exposed to weekend news flow. Reference specific tickers when warranted.",
+  "watch_list": "2-3 specific things to monitor heading into Monday. Could be a holding with weekend news, a Monday-morning catalyst (earnings, econ data), or a macro datapoint due early in the week. Be concrete."
+}"""
+
+
+def generate_ai_weekend_brief(data: dict[str, Any], api_key: str) -> dict[str, str]:
+    """Generate the Sunday-night weekend preview using Claude."""
+    client = Anthropic(api_key=api_key)
+
+    snapshot = data.get("market_snapshot", {})
+    news = data.get("filtered_news", [])
+    strategy_reads = data.get("strategy_reads", [])
+
+    payload = "WEEKEND PREVIEW DATA (Sunday evening, market reopens tomorrow):\n\n"
+
+    payload += "SUNDAY FUTURES (open ~3 PM PT Sunday):\n"
+    sp = snapshot.get("sp500_futures")
+    sp_chg = snapshot.get("sp500_change")
+    nq = snapshot.get("nasdaq_futures")
+    nq_chg = snapshot.get("nasdaq_change")
+    treas = snapshot.get("treasury_10y")
+    if sp:
+        payload += f"- S&P Futures: {sp:,.0f} ({'+' if sp_chg and sp_chg >= 0 else ''}{sp_chg:.2f}%)\n"
+    if nq:
+        payload += f"- NASDAQ Futures: {nq:,.0f} ({'+' if nq_chg and nq_chg >= 0 else ''}{nq_chg:.2f}%)\n"
+    if treas:
+        payload += f"- 10Y Treasury: {treas:.3f}%\n"
+
+    if news:
+        payload += "\nWEEKEND HEADLINES (portfolio holdings, AI-filtered):\n"
+        for n in news[:15]:
+            sym = n.get("ticker") or n.get("symbol") or ""
+            sym_str = f"[{sym}] " if sym else ""
+            payload += f"- {sym_str}{n.get('title', '')}\n"
+
+    if strategy_reads:
+        payload += "\nSTRATEGY READS (raw context — do not summarize, the email shows these in full):\n"
+        for p in strategy_reads[:6]:
+            payload += f"- ({p.get('source', '?')}) {p.get('title', '')}\n"
+
+    if not news and not strategy_reads:
+        payload += "\n(No new portfolio-relevant headlines or strategy reads in the weekend window.)\n"
+
+    try:
+        message = client.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=2048,
+            system=WEEKEND_SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": payload}],
+        )
+        response_text = message.content[0].text
+        json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+        if json_match:
+            brief = json.loads(json_match.group())
+            for key in ["weekend_takeaway", "monday_setup", "watch_list"]:
+                if key not in brief:
+                    brief[key] = ""
+            return brief
+        print("ERROR: Could not parse JSON from weekend AI response")
+        return _fallback_weekend_brief(data)
+    except Exception as e:
+        print(f"ERROR in weekend AI generation: {e}")
+        return _fallback_weekend_brief(data)
+
+
+def _fallback_weekend_brief(data: dict) -> dict:
+    snapshot = data.get("market_snapshot", {})
+    sp_chg = snapshot.get("sp500_change")
+    direction = "higher" if (sp_chg or 0) >= 0 else "lower"
+    return {
+        "weekend_takeaway": f"Sunday futures are pointing {direction}. See email for weekend headlines and strategy reads.",
+        "monday_setup": "Monitor pre-market action for portfolio-specific moves before the open.",
+        "watch_list": "Watch the open for follow-through on Sunday futures direction.",
+    }
+
+
+def format_weekend_html(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
+    """Format the Sunday-night weekend preview as HTML email."""
+    snapshot = data.get("market_snapshot", {})
+    news = data.get("filtered_news", [])
+    strategy_reads = data.get("strategy_reads", [])
+
+    now = datetime.now()
+    date_str = now.strftime("%B %d, %Y")
+    time_str = now.strftime("%I:%M %p PT").lstrip("0")
+
+    sp = snapshot.get("sp500_futures")
+    sp_chg = snapshot.get("sp500_change")
+    nq = snapshot.get("nasdaq_futures")
+    nq_chg = snapshot.get("nasdaq_change")
+    treas = snapshot.get("treasury_10y")
+
+    futures_rows = ""
+    if sp is not None:
+        arrow = "&#x25B2;" if sp_chg and sp_chg >= 0 else "&#x25BC;"
+        color = "#27ae60" if sp_chg and sp_chg >= 0 else "#c0392b"
+        futures_rows += f'<tr><td style="font-weight:700;">S&P Futures</td><td style="text-align:right;">{sp:,.0f}</td><td style="text-align:right;color:{color};font-weight:600;">{arrow} {sp_chg:+.2f}%</td></tr>'
+    if nq is not None:
+        arrow = "&#x25B2;" if nq_chg and nq_chg >= 0 else "&#x25BC;"
+        color = "#27ae60" if nq_chg and nq_chg >= 0 else "#c0392b"
+        futures_rows += f'<tr><td style="font-weight:700;">NASDAQ Futures</td><td style="text-align:right;">{nq:,.0f}</td><td style="text-align:right;color:{color};font-weight:600;">{arrow} {nq_chg:+.2f}%</td></tr>'
+    if treas is not None:
+        futures_rows += f'<tr><td style="font-weight:700;">10Y Treasury</td><td style="text-align:right;">{treas:.2f}%</td><td></td></tr>'
+
+    news_rows = ""
+    for n in news[:12]:
+        sym = n.get("ticker") or n.get("symbol") or ""
+        sym_cell = f'<td style="font-weight:700;width:70px;">{sym}</td>' if sym else '<td style="width:70px;"></td>'
+        title = n.get("title", "").replace("<", "&lt;").replace(">", "&gt;")
+        link = n.get("link", "") or n.get("url", "")
+        title_cell = f'<a href="{link}" style="color:#1a1a1a;text-decoration:none;">{title}</a>' if link else title
+        news_rows += f'<tr style="border-bottom:1px solid #e8e3de;">{sym_cell}<td>{title_cell}</td></tr>'
+
+    news_table = ""
+    if news_rows:
+        news_table = f"""
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:32px 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Weekend Headlines
+</h2>
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Arial,sans-serif;font-size:13px;">
+{news_rows}
+</table>
+"""
+
+    strategy_html = ""
+    if strategy_reads:
+        items = ""
+        for p in strategy_reads[:6]:
+            source = p.get("source", "?")
+            badge_color = "#c0392b" if source == "Stratechery" else "#1a4480"
+            title = p.get("title", "").replace("<", "&lt;").replace(">", "&gt;")
+            link = p.get("link", "")
+            excerpt = p.get("excerpt", "")
+            published = p.get("published_iso", "")[:10]
+            items += f"""
+<div style="margin-bottom:18px;padding-bottom:14px;border-bottom:1px solid #e8e3de;">
+    <div style="margin-bottom:6px;">
+        <span style="background-color:{badge_color};color:#fff;padding:2px 8px;font-size:11px;font-weight:700;letter-spacing:1px;">{source.upper()}</span>
+        <span style="color:#999;font-size:12px;margin-left:8px;">{published}</span>
+    </div>
+    <a href="{link}" style="color:#1a1a1a;text-decoration:none;font-family:Georgia,serif;font-size:15px;font-weight:700;">{title}</a>
+    <div style="font-family:Georgia,serif;font-size:13px;color:#555;margin-top:6px;line-height:1.6;">{excerpt}</div>
+</div>"""
+        strategy_html = f"""
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:32px 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Strategy &amp; Analysis
+</h2>
+{items}
+"""
+
+    html = f"""
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:640px;margin:0 auto;background-color:#f5f0eb;">
+<tr><td style="padding:40px 32px;">
+
+<!-- HEADER -->
+<div style="background-color:#1a1a1a;padding:24px 32px;margin-bottom:4px;">
+    <h1 style="font-family:Georgia,serif;font-size:22px;font-weight:400;color:#ffffff;margin:0;letter-spacing:2px;">WEEKEND PREVIEW</h1>
+    <div style="font-family:Arial,sans-serif;font-size:12px;color:#999;margin-top:6px;">{date_str} · {time_str} · Setup heading into Monday</div>
+</div>
+<div style="height:3px;background-color:#c0392b;margin-bottom:32px;"></div>
+
+<!-- WEEKEND TAKEAWAY -->
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Weekend Takeaway
+</h2>
+<div style="font-family:Georgia,serif;font-size:15px;color:#1a1a1a;margin-bottom:32px;line-height:1.7;">
+{ai_brief.get('weekend_takeaway', 'Quiet weekend.')}
+</div>
+
+<!-- SUNDAY FUTURES -->
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Sunday Futures
+</h2>
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Arial,sans-serif;font-size:13px;">
+{futures_rows or '<tr><td>Futures data unavailable.</td></tr>'}
+</table>
+
+<!-- MONDAY SETUP -->
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Monday Setup
+</h2>
+<div style="font-family:Georgia,serif;font-size:15px;color:#1a1a1a;margin-bottom:32px;line-height:1.7;">
+{ai_brief.get('monday_setup', 'Watch the open.')}
+</div>
+
+{news_table}
+
+{strategy_html}
+
+<!-- WATCH LIST -->
+<h2 style="font-family:Arial,sans-serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
+Watch List
+</h2>
+<div style="font-family:Georgia,serif;font-size:15px;color:#1a1a1a;margin-bottom:32px;line-height:1.7;">
+{ai_brief.get('watch_list', 'Watch the open.')}
+</div>
+
+<!-- FOOTER -->
+<div style="margin-top:32px;padding-top:16px;border-top:1px solid #e8e3de;font-family:Arial,sans-serif;font-size:12px;color:#999;">
+    {data.get('holdings_count', 84)} holdings · Sunday {time_str} · Setup for Monday
+</div>
+
+</td></tr></table>
+"""
+    return html
+
+
+def format_weekend_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
+    """Concise Sunday-night iMessage teaser (single chunk)."""
+    snapshot = data.get("market_snapshot", {})
+
+    now = datetime.now()
+    time_str = now.strftime("%I:%M %p PT").lstrip("0")
+
+    sp = snapshot.get("sp500_futures")
+    sp_chg = snapshot.get("sp500_change")
+    nq = snapshot.get("nasdaq_futures")
+    nq_chg = snapshot.get("nasdaq_change")
+    treas = snapshot.get("treasury_10y")
+    sp_str = f"S&P {sp:,.0f} ({sp_chg:+.1f}%)" if sp and sp_chg is not None else ""
+    nq_str = f"NQ {nq:,.0f} ({nq_chg:+.1f}%)" if nq and nq_chg is not None else ""
+    tr_str = f"10Y {treas:.2f}%" if treas else ""
+    mkt_line = " · ".join(x for x in [sp_str, nq_str, tr_str] if x)
+
+    text = f"""WEEKEND PREVIEW · Setup for Monday
+
+{mkt_line}
+
+▸ TAKEAWAY
+
+{ai_brief.get('weekend_takeaway', 'Quiet weekend.')}
+
+▸ MONDAY
+
+{ai_brief.get('monday_setup', 'Watch the open.')}
+
+───────────────────────────────
+Sun {time_str} · Full brief → email
+"""
+    return text
+
+
+# ============================================================================
 # END OF FILE
 # ============================================================================

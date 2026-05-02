@@ -37,6 +37,9 @@ from morning_briefing_redesign import (
     generate_ai_premarket_brief,
     format_premarket_html,
     format_premarket_text,
+    generate_ai_weekend_brief,
+    format_weekend_html,
+    format_weekend_text,
     send_html_email,
 )
 
@@ -4092,6 +4095,84 @@ def run_premarket_update():
         print("\n✗ Delivery failed - check iMessage and Mail configuration")
 
 
+def run_weekend_preview():
+    """Sunday-evening preview — Sunday futures + weekend headlines + strategy reads + AI synthesis for Monday."""
+    print("\n" + "=" * 50)
+    print("Weekend Preview (Sunday-night setup for Monday)")
+    print(datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    print("=" * 50)
+
+    all_tickers = CONFIG["INDIVIDUAL_STOCKS"] + CONFIG["ETFS"]
+    print(f"\nAnalyzing {len(all_tickers)} holdings...")
+
+    print("\n[1/4] Fetching Sunday futures snapshot...")
+    market_snapshot = fetch_market_snapshot(CONFIG["FINNHUB_API_KEY"])
+    sp = market_snapshot.get("sp500_futures")
+    nq = market_snapshot.get("nasdaq_futures")
+    print(f"  S&P Futures: {sp:,.0f}" if sp else "  S&P Futures: N/A")
+    print(f"  NASDAQ Futures: {nq:,.0f}" if nq else "  NASDAQ Futures: N/A")
+
+    print("\n[2/4] Fetching weekend portfolio news...")
+    news = fetch_yahoo_news(all_tickers)
+    filtered_news = filter_news_with_ai(news, CONFIG["ANTHROPIC_API_KEY"]) if news else []
+    print(f"  {len(filtered_news)} material news items (from {len(news)} raw)")
+
+    print("\n[3/4] Fetching strategy reads (Stratechery + Asianometry)...")
+    strategy_reads = fetch_strategy_reads(
+        CONFIG["STRATECHERY_RSS_URL"],
+        CONFIG["ASIANOMETRY_RSS_URL"],
+        CONFIG["STRATEGY_READS_SEEN_FILE"],
+        lookback_hours=CONFIG["STRATEGY_READS_LOOKBACK_HOURS"],
+    )
+    if strategy_reads:
+        by_source = {}
+        for p in strategy_reads:
+            by_source.setdefault(p["source"], 0)
+            by_source[p["source"]] += 1
+        print("  " + " · ".join(f"{src}: {n}" for src, n in by_source.items()))
+    else:
+        print("  No new posts in lookback window")
+
+    weekend_data = {
+        "market_snapshot": market_snapshot,
+        "filtered_news": filtered_news,
+        "strategy_reads": strategy_reads,
+        "holdings_count": len(all_tickers),
+    }
+
+    print("\n[4/4] Generating AI weekend brief...")
+    try:
+        ai_brief = generate_ai_weekend_brief(weekend_data, CONFIG["ANTHROPIC_API_KEY"])
+        print("  ✓ AI brief generated")
+        html_email = format_weekend_html(ai_brief, weekend_data)
+        text_message = format_weekend_text(ai_brief, weekend_data)
+        print(f"  ✓ HTML: {len(html_email):,} bytes · Text: {len(text_message):,} chars")
+    except Exception as e:
+        print(f"  ✗ AI brief failed: {e}")
+        return
+
+    print("\n" + "=" * 50)
+    print(text_message)
+    print("=" * 50)
+
+    print(f"\nSending iMessage to {CONFIG['IMESSAGE_RECIPIENT']}...")
+    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], text_message)
+
+    print(f"Sending email to {CONFIG['EMAIL_RECIPIENT']}...")
+    today = datetime.now().strftime("%B %d, %Y")
+    email_subject = f"Weekend Preview – {today}"
+    email_success = send_html_email(CONFIG["EMAIL_RECIPIENT"], email_subject, html_email)
+
+    if imessage_success and email_success:
+        print("\n✓ Weekend preview delivered via iMessage and Email!")
+    elif imessage_success:
+        print("\n⚠ Preview sent via iMessage only (email failed)")
+    elif email_success:
+        print("\n⚠ Preview sent via Email only (iMessage failed)")
+    else:
+        print("\n✗ Delivery failed - check iMessage and Mail configuration")
+
+
 def main():
     """Main entry point - dispatch based on command line argument."""
     # Support both "python3 script.py premarket" and "python3 script.py --mode premarket"
@@ -4127,6 +4208,8 @@ def main():
             run_market_recap()
         elif mode == "lunarcrush":
             run_lunarcrush_brief()
+        elif mode == "weekend_preview":
+            run_weekend_preview()
         else:
             run_morning_briefing()
     finally:
