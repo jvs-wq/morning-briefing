@@ -1,0 +1,10 @@
+anthropic
+requests
+yfinance
+feedparser
+
+# Optional — only needed if you use the Vital Knowledge / Gmail integration
+# (run `python3 morning_briefing.py --setup-gmail` to authorize first).
+google-auth
+google-auth-oauthlib
+google-api-python-client
