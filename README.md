@@ -10,7 +10,7 @@ Major earnings data upgrade for Q1 2026 earnings season:
 - **Revenue estimates vs actuals** — shown in scorecard and upcoming earnings calendar (from Finnhub)
 - **AI guidance analysis** — Claude infers raised/lowered/in-line from news headlines after each report
 - **Sell-side analyst actions** — upgrades, downgrades, and price target changes via yfinance (7-day window). iMessage shows material changes only (rating changes, PT >10%, new coverage); full list in HTML email.
-- **BCM holdings update** — 74 stocks + 15 ETFs = 89 total
+- **BCM holdings update** — at the time, 74 stocks + 15 ETFs = 89 total. *Has since been refreshed 2026-04-23 to 70 stocks + 14 ETFs = 84 total — see `PROJECT_STATE.md` and the heading line at the top of this README.*
 - **dotenv fix** — `_load_dotenv()` uses direct assignment instead of `setdefault` to avoid empty shell env var masking
 
 ## v2 — AI Editorial Intelligence (2026-04-06)
@@ -26,18 +26,22 @@ Redesigned from plain-text data dump to AI-powered editorial brief. Claude Sonne
 - **Earnings calendar** — upcoming reports with EPS and revenue estimates
 - **Analyst actions** — sell-side upgrades/downgrades/PT changes (7-day window)
 - **AI-filtered news** — relevant headlines selected and interpreted by Claude API
-- **Social intelligence** — LunarCrush social buzz and creator signals with color-coded interpretive signals
-- **Strategy reads (recap only)** — long-form analyst posts (Stratechery, Asianometry) from the last 48h surfaced in a "Strategy & Analysis" section of the recap email, with GUID-deduped state so each post appears once
+- **Strategy reads (recap + weekend_preview)** — long-form analyst posts (Stratechery, Asianometry) from the last 48h surfaced in a "Strategy & Analysis" section, with GUID-deduped state shared across recap and weekend_preview so each post appears once
 - **HTML email** — professional typography with data appendix tables
-- **Plain text iMessage** — formatted for mobile, auto-chunks at ~1600 chars
+- **Slim iMessage teaser** — single chunk, ~750–900 chars, lead paragraph + market snapshot + pointer to email. (Old multi-chunk text dump was retired 2026-04-22.)
+- **Social intelligence** — *the morning brief no longer calls LunarCrush as of 2026-04-26.* Daily LunarCrush coverage lives in the sibling [`lunarcrush-brief`](https://github.com/jvs-wq/lunarcrush-brief) repo (evening 5 PM PT, Saturday weekly digest, Monday review).
 
 ## Architecture
 
 ```
-morning_briefing.py          — Main script: data collection, all modes (3,464 lines)
-morning_briefing_redesign.py — v2 module: AI brief, HTML email, text format (1,048 lines)
+morning_briefing.py          — Main script: data collection + all four modes (~4,225 lines)
+morning_briefing_redesign.py — AI briefs, HTML email, iMessage text for all four modes (~2,501 lines)
 briefing_monitor.py          — Health monitoring and alerting
+launchd/                     — Launchd plists + idempotent install.sh (source of truth for the schedule)
+scripts/verify_schedule.sh   — Schedule health smoke-test (also runs as a one-shot check)
+requirements.txt             — Python dependencies
 earnings_history.json        — Persistent 4-week earnings lookback (gitignored, runtime)
+strategy_reads_seen.json     — Stratechery + Asianometry GUID dedup state (gitignored, runtime)
 .env                         — API keys (gitignored)
 ```
 
@@ -115,9 +119,10 @@ The sibling [`lunarcrush-brief`](https://github.com/jvs-wq/lunarcrush-brief) rep
 | Finnhub | API key | Earnings calendar + scorecard (with revenue), market snapshot |
 | Alpha Vantage | API key | RSI alerts, last-resort earnings |
 | FMP | API key | Pre-market movers fallback, portfolio performance |
-| LunarCrush | API key | Social buzz, creator signals |
-| Stratechery (Passport RSS) | Personal feed URL | Long-form tech-strategy posts in recap "Strategy & Analysis" section |
-| Asianometry (Passport RSS) | Personal feed URL | Long-form semiconductor / East Asia analysis in recap "Strategy & Analysis" section |
+| Stratechery (Passport RSS) | Personal feed URL | Long-form tech-strategy posts in recap + weekend_preview "Strategy & Analysis" sections |
+| Asianometry (Passport RSS) | Personal feed URL | Long-form semiconductor / East Asia analysis in recap + weekend_preview "Strategy & Analysis" sections |
+
+LunarCrush is **not** a data source for this repo as of 2026-04-26 — see the sibling [`lunarcrush-brief`](https://github.com/jvs-wq/lunarcrush-brief) repo for daily evening / Saturday weekly / Monday review LunarCrush coverage.
 
 ## Data Quality Notes
 
