@@ -33,6 +33,12 @@ WRITING DISCIPLINE:
 - Connect to portfolio mechanics: do these moves validate existing positioning, or do they signal thesis drift?
 - Maximum 800 words across all sections.
 
+EARNINGS GROUNDING (hard rule — do not violate):
+- Beat/miss claims must come ONLY from the EARNINGS SCORECARD section of the data bundle, which carries an explicit BEAT or MISS tag per ticker. That tag is authoritative.
+- When grading a print in prose, quote actual vs estimate from the scorecard row ("GOOGL beat at $2.81 vs $2.01 est"). Do not assert "X missed" or "Y beat" without the matching scorecard row in front of you.
+- If a ticker is NOT in the scorecard, do not characterize its earnings as a beat or miss. Refer to it as "reported" or "pending" only, or omit the claim.
+- Never contradict the scorecard's BEAT/MISS tag. If the row says BEAT, the ticker beat — full stop.
+
 OUTPUT STRUCTURE (return as valid JSON with these exact keys):
 {
   "what_matters": "1-3 paragraph lead. THE most critical signal today—earnings surprise, macro pivot, holdings catalyst, or market structure break. Always explain the specific impact on the portfolio. This is the section the CEO reads in 30 seconds when running late.",
@@ -288,6 +294,12 @@ POST-CLOSE WRITING DISCIPLINE:
 DATA-QUALITY AWARENESS:
 - If the data bundle indicates price drift flags between sources (yfinance vs Finnhub disagreement >0.10%), mention which holdings had drift and which source you are trusting. Do NOT fabricate precision you don't have.
 - If a holding's close price and daily change are both flagged with drift, treat the direction of the move as reliable but caveat the magnitude.
+
+EARNINGS GROUNDING (hard rule — do not violate):
+- Beat/miss claims must come ONLY from the EARNINGS SCORECARD section of the data bundle, which carries an explicit BEAT or MISS tag per ticker. That tag is authoritative.
+- When grading a print in prose, quote actual vs estimate from the scorecard row ("GOOGL beat at $2.81 vs $2.01 est"). Do not assert "X missed" or "Y beat" without the matching scorecard row in front of you.
+- If a ticker is NOT in the scorecard, do not characterize its earnings as a beat or miss. Refer to it as "reported" or "pending" only, or omit the claim.
+- Never contradict the scorecard's BEAT/MISS tag. If the row says BEAT, the ticker beat — full stop.
 
 OUTPUT STRUCTURE (return as valid JSON with these exact keys):
 {
@@ -1910,6 +1922,8 @@ WRITING DISCIPLINE:
 - Name specific levels, prices, percentages. No vague commentary.
 - If nothing material changed since the 5 AM brief, say so in one sentence and focus on the open setup.
 
+EARNINGS GROUNDING (hard rule): Beat/miss calls come ONLY from the JUST PRINTED or EARNINGS SCORECARD rows in the data bundle (each carries an explicit BEAT/MISS tag). Quote actual vs estimate when you grade. If a ticker isn't in those rows, do not call it a beat or miss — say "reported" or "pending." Never contradict the BEAT/MISS tag.
+
 OUTPUT STRUCTURE (return as valid JSON with these exact keys):
 {
   "open_signal": "1-2 paragraphs. The single most important thing for the open. If any BMO earnings prints dropped between the 5 AM brief and now (see JUST PRINTED section), grade them first — actual vs. estimate, revenue beat/miss, guidance if visible in the pre-market reaction. That is the most important delta. Otherwise, what moved in futures/pre-market and what it means for positioning.",
@@ -2250,6 +2264,8 @@ WRITING DISCIPLINE:
 - Sunday futures (open ~3 PM PT) are a sentiment gauge, not gospel. Use them as a directional signal, not a price prediction.
 - Be concise. Max 500 words across all sections. The CEO is reading this Sunday evening.
 - Connect weekend news to specific holdings when there is a real link. Don't manufacture connections.
+
+EARNINGS GROUNDING (hard rule): If you reference last week's prints, beat/miss calls must come ONLY from the EARNINGS SCORECARD rows in the data bundle (each carries an explicit BEAT/MISS tag). Quote actual vs estimate. If a ticker isn't in the scorecard, do not call it a beat or miss. Never contradict the BEAT/MISS tag.
 
 OUTPUT STRUCTURE (return as valid JSON with these exact keys):
 {
