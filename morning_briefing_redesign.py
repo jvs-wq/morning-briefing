@@ -43,6 +43,12 @@ EARNINGS GROUNDING (hard rule — do not violate):
 - If a ticker is NOT in the scorecard, do not characterize its earnings as a beat or miss. Refer to it as "reported" or "pending" only, or omit the claim.
 - Never contradict the scorecard's BEAT/MISS tag. If the row says BEAT, the ticker beat — full stop.
 
+NARRATIVE-vs-TAPE CONSISTENCY (hard rule — do not violate):
+- Whenever you assert a fundamental positive (beat, raise, "thesis validation," "AI demand surge," "inflection") about a ticker, you MUST cross-check the same ticker's price action in the data bundle (PRE-MARKET MOVERS or recent close) and reflect it.
+- If the price reaction contradicts your fundamental claim (e.g., bullish guidance but the stock is down pre-market), do NOT bury the contradiction. Lead with it: "Stock is down X% pre-market despite the raise — Street is fading the print, signals Y." Soft price reactions to apparently bullish prints are a signal in their own right.
+- Never write a thesis-validation lead for a holding whose pre-market move contradicts the narrative without naming and explaining the gap. Selling-the-news, valuation reset, guidance footnotes, and buy-side positioning are all legitimate explanations — pick one and back it.
+- "I told you so" leads must survive the price tape. If they don't, the lead is wrong.
+
 OUTPUT STRUCTURE (return as valid JSON with these exact keys):
 {
   "what_matters": "1-3 paragraph lead. THE most critical signal today—earnings surprise, macro pivot, holdings catalyst, or market structure break. Always explain the specific impact on the portfolio. This is the section the CEO reads in 30 seconds when running late.",
@@ -308,6 +314,11 @@ EARNINGS GROUNDING (hard rule — do not violate):
 - When grading a print in prose, quote actual vs estimate from the scorecard row. Do not assert "X missed" or "Y beat" without the matching scorecard row in front of you.
 - If a ticker is NOT in the scorecard, do not characterize its earnings as a beat or miss. Refer to it as "reported" or "pending" only, or omit the claim.
 - Never contradict the scorecard's BEAT/MISS tag. If the row says BEAT, the ticker beat — full stop.
+
+NARRATIVE-vs-TAPE CONSISTENCY (hard rule — do not violate):
+- Whenever you assert a fundamental positive (beat, raise, "thesis validation," "inflection") about a ticker, cross-check the same ticker's close and day % from the bundle and reflect it. A bullish print + soft (or red) tape is itself a signal — name it.
+- Never lead with thesis-validation prose for a holding whose price action contradicts the narrative without naming and explaining the gap. Sell-the-news, valuation reset, guidance footnotes, and positioning unwinds are all legitimate explanations — pick one.
+- The bullish editorial must survive the day's tape. If it doesn't, the editorial is wrong, not the tape.
 
 OUTPUT STRUCTURE (return as valid JSON with these exact keys):
 {
@@ -1934,6 +1945,8 @@ EXAMPLES IN THIS PROMPT ARE NOT DATA (hard rule): Any ticker, price, percentage,
 
 EARNINGS GROUNDING (hard rule): Beat/miss calls come ONLY from the JUST PRINTED or EARNINGS SCORECARD rows in the data bundle (each carries an explicit BEAT/MISS tag). Quote actual vs estimate when you grade. If a ticker isn't in those rows, do not call it a beat or miss — say "reported" or "pending." Never contradict the BEAT/MISS tag.
 
+NARRATIVE-vs-TAPE CONSISTENCY (hard rule): If a ticker beat or raised but is trading down pre-market, the editorial must name and explain the gap (sell-the-news, guidance footnote, positioning unwind) — not lead with "thesis validation" while the tape is red. The bullish lead must survive the pre-market quote.
+
 OUTPUT STRUCTURE (return as valid JSON with these exact keys):
 {
   "open_signal": "1-2 paragraphs. The single most important thing for the open. If any BMO earnings prints dropped between the 5 AM brief and now (see JUST PRINTED section), grade them first — actual vs. estimate, revenue beat/miss, guidance if visible in the pre-market reaction. That is the most important delta. Otherwise, what moved in futures/pre-market and what it means for positioning.",
@@ -2278,6 +2291,8 @@ WRITING DISCIPLINE:
 EXAMPLES IN THIS PROMPT ARE NOT DATA (hard rule): Any ticker, price, or figure in the system prompt is illustrative — never parrot it as fact. Every concrete number you write must come from the user-message data bundle.
 
 EARNINGS GROUNDING (hard rule): If you reference last week's prints, beat/miss calls must come ONLY from the EARNINGS SCORECARD rows in the data bundle (each carries an explicit BEAT/MISS tag). Quote actual vs estimate. If a ticker isn't in the scorecard, do not call it a beat or miss. Never contradict the BEAT/MISS tag.
+
+NARRATIVE-vs-TAPE CONSISTENCY (hard rule): If a holding's print was bullish but its Friday close was red (or vice versa), name the gap — don't write thesis-validation prose against a tape that contradicts it.
 
 OUTPUT STRUCTURE (return as valid JSON with these exact keys):
 {
