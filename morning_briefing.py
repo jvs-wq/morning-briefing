@@ -30,13 +30,11 @@ import feedparser
 from morning_briefing_redesign import (
     generate_ai_morning_brief,
     format_morning_html,
-    format_morning_text,
     format_market_recap_html,
     generate_ai_recap_brief,
     format_recap_text,
     generate_ai_premarket_brief,
     format_premarket_html,
-    format_premarket_text,
     generate_ai_weekend_brief,
     format_weekend_html,
     format_weekend_text,
@@ -69,6 +67,47 @@ import requests
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
 from anthropic import Anthropic
+
+# === v2.6 safeguard: anti-regression guard ===
+# Refuses to run if any iMessage symbol reappears.  This blocks the
+# May-2026 deploy-drift regression at its source: if a future edit
+# reintroduces send_imessage, IMESSAGE_RECIPIENT, _chunk_message, or
+# format_morning_text-sent-via-imessage, the script exits 99 before
+# any data fetch or email send.
+def _v2_6_guard() -> None:
+    import os, re, sys
+    me = os.path.abspath(__file__)
+    here = os.path.dirname(me)
+    suspects = [
+        os.path.join(here, "morning_briefing.py"),
+        os.path.join(here, "morning_briefing_redesign.py"),
+        os.path.join(here, "briefing_monitor.py"),
+    ]
+    forbidden = re.compile(r"\b(send_imessage|IMESSAGE_RECIPIENT|_chunk_message)\b")
+    block_re = re.compile(
+        r"# === v2\.6 safeguard.*?# === end v2\.6 safeguard ===",
+        re.DOTALL,
+    )
+    for path in suspects:
+        if not os.path.exists(path):
+            continue
+        with open(path, "r", encoding="utf-8") as fh:
+            txt = fh.read()
+        clean = block_re.sub("", txt)
+        m = forbidden.search(clean)
+        if m:
+            sys.stderr.write(
+                "\n[v2.6 GUARD] iMessage symbol '%s' reappeared in %s.\n"
+                "Refusing to run.  See migrations/v2_6_imessage_removal_and_safeguards.py.\n\n"
+                % (m.group(0), path)
+            )
+            sys.exit(99)
+
+
+_v2_6_guard()
+# === end v2.6 safeguard ===
+
+
 
 # Gmail API imports (for Vital Knowledge)
 try:
@@ -105,7 +144,6 @@ CONFIG = {
     "ALPHA_VANTAGE_API_KEY": os.getenv("ALPHA_VANTAGE_API_KEY", ""),
 
     # Delivery
-    "IMESSAGE_RECIPIENT": os.getenv("IMESSAGE_RECIPIENT", ""),
     "EMAIL_RECIPIENT": os.getenv("EMAIL_RECIPIENT", ""),
 
     # Holdings — combined personal (JVS) ∪ BCM portfolios
@@ -3435,10 +3473,6 @@ def run_lunarcrush_brief():
     print(brief)
     print("=" * 50)
 
-    # Send via iMessage
-    print(f"\nSending iMessage to {CONFIG['IMESSAGE_RECIPIENT']}...")
-    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], brief)
-
     # Send via Email
     print(f"Sending email to {CONFIG['EMAIL_RECIPIENT']}...")
     today = datetime.now().strftime("%B %d, %Y")
@@ -3469,94 +3503,6 @@ def _wake_app(app_name: str) -> None:
         time.sleep(2)  # Give app time to fully wake
     except Exception:
         pass  # Best effort — continue even if activate fails
-
-
-def _chunk_message(message: str, max_chars: int = 4000) -> list:
-    """Split a long message into chunks at section boundaries."""
-    if len(message) <= max_chars:
-        return [message]
-
-    chunks = []
-    remaining = message
-    while remaining:
-        if len(remaining) <= max_chars:
-            chunks.append(remaining)
-            break
-        # Try to split at a section boundary (double newline or ═/─ line)
-        split_at = -1
-        for marker in ["\n\n▸ ", "\n\n┌", "\n\n────", "\n══", "\n\n"]:
-            idx = remaining.rfind(marker, 0, max_chars)
-            if idx > max_chars // 4:  # Don't split too early
-                split_at = idx
-                break
-        if split_at == -1:
-            # Fallback: split at last newline before limit
-            split_at = remaining.rfind("\n", 0, max_chars)
-        if split_at <= 0:
-            split_at = max_chars
-        chunks.append(remaining[:split_at])
-        remaining = remaining[split_at:].lstrip("\n")
-    return chunks
-
-
-def send_imessage(recipient: str, message: str, max_retries: int = 3) -> bool:
-    """Send message via iMessage using AppleScript.
-
-    Wakes Messages.app from App Nap before sending, chunks long messages,
-    and retries on timeout (-1712) errors.
-    """
-    chunks = _chunk_message(message)
-    print(f"  iMessage: {len(message)} chars in {len(chunks)} chunk(s)")
-
-    # Wake Messages.app from App Nap (critical for 5 AM launchd runs)
-    _wake_app("Messages")
-
-    for i, chunk in enumerate(chunks):
-        escaped_chunk = chunk.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
-
-        applescript = f'''
-        with timeout of 300 seconds
-            tell application "Messages"
-                set targetService to 1st account whose service type = iMessage
-                set targetBuddy to participant "{recipient}" of targetService
-                send "{escaped_chunk}" to targetBuddy
-            end tell
-        end timeout
-        '''
-
-        sent = False
-        for attempt in range(1, max_retries + 1):
-            try:
-                subprocess.run(
-                    ["osascript", "-e", applescript],
-                    check=True,
-                    capture_output=True,
-                    text=True,
-                    timeout=320  # Python timeout slightly longer than AppleScript timeout
-                )
-                sent = True
-                if len(chunks) > 1:
-                    print(f"  ✓ Chunk {i+1}/{len(chunks)} sent")
-                    time.sleep(1)  # Inter-chunk delay
-                break
-            except subprocess.CalledProcessError as e:
-                print(f"  ✗ iMessage attempt {attempt}/{max_retries}: {e.stderr.strip()}")
-                if attempt < max_retries:
-                    print(f"    Retrying in 5s (re-activating Messages.app)...")
-                    _wake_app("Messages")
-                    time.sleep(3)
-            except subprocess.TimeoutExpired:
-                print(f"  ✗ iMessage attempt {attempt}/{max_retries}: Python subprocess timeout (320s)")
-                if attempt < max_retries:
-                    _wake_app("Messages")
-                    time.sleep(3)
-
-        if not sent:
-            print(f"✗ Failed to send iMessage after {max_retries} attempts")
-            return False
-
-    print(f"✓ iMessage sent to {recipient}")
-    return True
 
 
 def send_email(recipient: str, subject: str, body: str, max_retries: int = 3) -> bool:
@@ -3624,11 +3570,6 @@ def run_morning_briefing():
     if CONFIG["ANTHROPIC_API_KEY"] == "YOUR_ANTHROPIC_API_KEY_HERE":
         print("ERROR: Please set your Anthropic API key")
         print("  Edit this file or set ANTHROPIC_API_KEY environment variable")
-        return
-
-    if CONFIG["IMESSAGE_RECIPIENT"] == "YOUR_PHONE_OR_EMAIL_HERE":
-        print("ERROR: Please set your iMessage recipient")
-        print("  Edit this file or set IMESSAGE_RECIPIENT environment variable")
         return
 
     # Combine all tickers
@@ -3756,6 +3697,29 @@ def run_morning_briefing():
     print("\n[10/10] Generating AI intelligence brief...")
 
     # Bundle all data for the AI
+# === v2.6 days_since enrichment ===
+    from datetime import datetime as _dt_v26, date as _date_v26
+    _today_v26 = _dt_v26.now().date()
+    def _enrich(rec):
+        d = rec.get('date') or rec.get('report_date')
+        if isinstance(d, str):
+            try:
+                d = _dt_v26.strptime(d[:10], '%Y-%m-%d').date()
+            except Exception:
+                d = None
+        if isinstance(d, _date_v26):
+            rec['days_since'] = (_today_v26 - d).days
+        return rec
+    try:
+        scorecard = [_enrich(dict(r)) for r in (scorecard or [])]
+    except Exception:
+        pass
+    try:
+        earnings = [_enrich(dict(r)) for r in (earnings or [])]
+    except Exception:
+        pass
+    # === end v2.6 days_since enrichment ===
+
     briefing_data = {
         "market_snapshot": market_snapshot,
         "premarket_movers": premarket_movers,
@@ -3794,10 +3758,6 @@ def run_morning_briefing():
     print("\n" + "=" * 50)
     print(text_message)
     print("=" * 50)
-
-    # Send via iMessage (plain text)
-    print(f"\nSending iMessage to {CONFIG['IMESSAGE_RECIPIENT']}...")
-    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], text_message)
 
     # Send via Email (HTML if available, plain text fallback)
     print(f"Sending email to {CONFIG['EMAIL_RECIPIENT']}...")
@@ -3944,10 +3904,6 @@ def run_market_recap():
     print(recap_text)
     print("=" * 50)
 
-    # Send via iMessage (text)
-    print(f"\nSending iMessage to {CONFIG['IMESSAGE_RECIPIENT']}...")
-    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], recap_text)
-
     # Send via Email (HTML if available, plain text fallback)
     print(f"Sending email to {CONFIG['EMAIL_RECIPIENT']}...")
     today = datetime.now().strftime("%B %d, %Y")
@@ -4072,10 +4028,6 @@ def run_premarket_update():
     print(text_message)
     print("=" * 50)
 
-    # Send iMessage (slim teaser)
-    print(f"\nSending iMessage to {CONFIG['IMESSAGE_RECIPIENT']}...")
-    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], text_message)
-
     # Send HTML email
     print(f"Sending email to {CONFIG['EMAIL_RECIPIENT']}...")
     today = datetime.now().strftime("%B %d, %Y")
@@ -4154,9 +4106,6 @@ def run_weekend_preview():
     print("\n" + "=" * 50)
     print(text_message)
     print("=" * 50)
-
-    print(f"\nSending iMessage to {CONFIG['IMESSAGE_RECIPIENT']}...")
-    imessage_success = send_imessage(CONFIG["IMESSAGE_RECIPIENT"], text_message)
 
     print(f"Sending email to {CONFIG['EMAIL_RECIPIENT']}...")
     today = datetime.now().strftime("%B %d, %Y")

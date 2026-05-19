@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.briefing.deploy</string>
+
+    <!--
+      4:50 AM weekdays — 10 minutes before com.briefing.morning fires.
+      Mirrors Drive → ~/Claude/morning-briefing/, commits + pushes any
+      diffs to GitHub, then reloads all five briefing LaunchAgents.
+      This is the anti-recurrence guarantee for the May-2026 drift bug.
+    -->
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>/Users/jeffreystclaire/Claude/morning-briefing/scripts/deploy.sh</string>
+        <string>--reload</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>50</integer><key>Weekday</key><integer>1</integer></dict>
+        <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>50</integer><key>Weekday</key><integer>2</integer></dict>
+        <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>50</integer><key>Weekday</key><integer>3</integer></dict>
+        <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>50</integer><key>Weekday</key><integer>4</integer></dict>
+        <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>50</integer><key>Weekday</key><integer>5</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/tmp/briefing-deploy.log</string>
+    <key>StandardErrorPath</key>
+    <string>/tmp/briefing-deploy.err</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+</dict>
+</plist>

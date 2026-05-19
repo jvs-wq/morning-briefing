@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Morning Briefing Health Monitor
-Checks log files after each launchd run and sends an alert via iMessage
+Checks log files after each launchd run and sends an alert via email
 if any failures are detected. Designed to be called by a launchd plist
 ~5 minutes after each briefing workflow.
 
@@ -26,7 +26,7 @@ import time
 from datetime import datetime, timedelta
 
 # ── Configuration ──────────────────────────────────────────────────────────
-IMESSAGE_RECIPIENT = "jvs@blumecapital.com"
+EMAIL_RECIPIENT = "jvs@blumecapital.com"
 LOG_DIR = "/tmp"
 MONITOR_LOG = "/tmp/briefing-monitor.log"
 
@@ -74,7 +74,7 @@ KNOWN_NOISE_PATTERNS = [
 
 # What to look for in logs
 FAILURE_PATTERNS = [
-    "✗ Failed to send iMessage",
+    "✗ Failed to send email",
     "✗ Delivery failed",
     "Traceback (most recent call last)",
     "error -1712",           # AppleEvent timeout (App Nap)
@@ -91,21 +91,12 @@ SUCCESS_PATTERNS = {
     "premarket": "✓ Pre-market update delivered",
     "recap": "✓ Market recap delivered",
     # lunarcrush_brief.py doesn't emit the ✓ marker; end-of-run is "Completed in Xs"
-    # preceded by "iMessage sent" and "Email sent". Match the wall-clock marker.
+    # preceded by "Email sent". Match the wall-clock marker.
     "lunarcrush": "Completed in",
 }
 
-# Partial success (one channel delivered)
-PARTIAL_PATTERNS = [
-    "⚠ Briefing sent via iMessage only",
-    "⚠ Briefing sent via Email only",
-    "⚠ Update sent via iMessage only",
-    "⚠ Update sent via Email only",
-    "⚠ Recap sent via iMessage only",
-    "⚠ Recap sent via Email only",
-    "⚠ Brief sent via iMessage only",
-    "⚠ Brief sent via Email only",
-]
+# Email-only dispatch: no partial-delivery states. If email fails, it's a FAILURE.
+PARTIAL_PATTERNS: list[str] = []
 
 # API-level warnings (not failures, but degraded)
 WARNING_PATTERNS = [
@@ -287,19 +278,37 @@ def format_alert(results: list[dict]) -> str | None:
 
 
 def send_alert(message: str) -> bool:
-    """Send alert via iMessage."""
-    escaped = message.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+    """Send alert via Apple Mail."""
+    # Wake Mail.app from App Nap
+    try:
+        subprocess.run(
+            ["osascript", "-e", 'tell application "Mail" to activate'],
+            capture_output=True, text=True, timeout=30,
+        )
+        time.sleep(2)
+    except Exception:
+        pass  # Best effort
+
+    today = datetime.now().strftime("%Y-%m-%d %H:%M")
+    subject = f"⚠ Briefing Monitor Alert – {today}"
+    escaped_subject = subject.replace('"', '\\"')
+    escaped_body = message.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\r")
+
     applescript = f'''
-    tell application "Messages"
-        set targetService to 1st account whose service type = iMessage
-        set targetBuddy to participant "{IMESSAGE_RECIPIENT}" of targetService
-        send "{escaped}" to targetBuddy
-    end tell
+    with timeout of 120 seconds
+        tell application "Mail"
+            set newMessage to make new outgoing message with properties {{subject:"{escaped_subject}", content:"{escaped_body}", visible:false}}
+            tell newMessage
+                make new to recipient at end of to recipients with properties {{address:"{EMAIL_RECIPIENT}"}}
+                send
+            end tell
+        end tell
+    end timeout
     '''
     try:
         subprocess.run(
             ["osascript", "-e", applescript],
-            check=True, capture_output=True, text=True, timeout=60
+            check=True, capture_output=True, text=True, timeout=130
         )
         return True
     except Exception as e:
@@ -342,10 +351,27 @@ def main():
         for warn in r["warnings"]:
             print(f"  · {warn}")
 
+
+    # v2.6 staleness wiring — surface deploy drift in every monitor run
+    _drift, _drift_lines = check_deploy_freshness()
+    if _drift:
+        drift_msg = (
+            "DEPLOY DRIFT DETECTED — production code does not match Drive:\n  "
+            + "\n  ".join(_drift_lines)
+            + "\n\nThe daily auto-sync (com.briefing.deploy.plist at 4:50 AM weekdays) "
+            "should reconcile this.  If you see this twice running, the sync job is broken."
+        )
+        print("\n" + drift_msg)
+        try:
+            send_alert(drift_msg)
+        except Exception as e:
+            print(f"Failed to dispatch drift alert: {e}")
+
+
     # Send alert if needed
     alert = format_alert(results)
     if alert:
-        print(f"\nSending alert to {IMESSAGE_RECIPIENT}...")
+        print(f"\nSending alert email to {EMAIL_RECIPIENT}...")
         if send_alert(alert):
             print("✓ Alert sent")
         else:
@@ -358,3 +384,29 @@ def main():
 
 if __name__ == "__main__":
     main()
+
+
+# === v2.6 staleness alarm ===
+def check_deploy_freshness() -> tuple[bool, list[str]]:
+    """Compare production code SHAs against Drive mirror. Returns (drift_found, lines)."""
+    import hashlib, os, time
+    prod = os.path.expanduser("~/Claude/morning-briefing")
+    drive = os.path.expanduser("~/My Drive/Claude-Workspace/Claude Projects/Morning Briefing")
+    if not os.path.isdir(drive):
+        return False, []
+    drift = []
+    for name in ("morning_briefing.py", "morning_briefing_redesign.py", "briefing_monitor.py"):
+        p_path = os.path.join(prod, name)
+        d_path = os.path.join(drive, name)
+        if not (os.path.exists(p_path) and os.path.exists(d_path)):
+            continue
+        with open(p_path, "rb") as f:
+            ph = hashlib.sha256(f.read()).hexdigest()
+        with open(d_path, "rb") as f:
+            dh = hashlib.sha256(f.read()).hexdigest()
+        if ph != dh:
+            age_h = (time.time() - os.path.getmtime(d_path)) / 3600
+            drift.append(f"{name}: prod={ph[:8]} drive={dh[:8]} (drive age {age_h:.1f}h)")
+    return (len(drift) > 0), drift
+# === end v2.6 staleness alarm ===
+

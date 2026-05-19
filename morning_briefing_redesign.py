@@ -78,7 +78,24 @@ CRITICAL NOTES:
 - If a holdings is down on no news, investigate: market rotation, sector headwind, or irrational? Help the CEO calibrate.
 - Earnings surprise synthesis matters enormously. A string of 5% beats might signal conservative guidance. A string of misses might signal cycle inflection.
 - RSI extremes and 52-week lows are tactical—mention only if they're actionable (approaching support, oversold entry, contrarian signal).
-- Your output is the CEO's input to the day. Make every word count."""
+- Your output is the CEO's input to the day. Make every word count.
+
+## v2.6 freshness rule (data-staleness anti-pattern)
+- The `scorecard` field contains earnings that REPORTED IN THE LAST 21 DAYS.
+  Each entry has a `days_since` field.  If `days_since > 1`, the print is
+  history — do NOT lead with it as a current-day catalyst.  Reference it
+  only as context for the cycle read.
+- "Upcoming" means an earnings entry whose `date` is today or in the
+  future.  If you can't find one for a name you want to discuss, do not
+  invent one — say "no scheduled catalyst this week."
+- If the `earnings calendar` shows a date that matches today's year/month
+  (e.g. "May 2026" on May 19, 2026), trust it.  Do not flag it as a data
+  error.  Real upcoming earnings genuinely fall in the current month.
+- Lead-section eligibility: an earnings event qualifies for the WHAT MATTERS
+  lead ONLY if `days_since == 0` (reported today, including after-hours
+  yesterday) or its scheduled date is today.  Older prints belong in
+  EARNINGS INTELLIGENCE as cycle context.
+"""
 
 
 # ============================================================================
@@ -1525,7 +1542,7 @@ def format_market_recap_html(data, ai_brief=None):
 
 def format_morning_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
     """
-    Format a concise iMessage teaser for the morning intelligence brief.
+    Format a concise plain-text version of the morning brief.
     Designed to fit in a single ~1500-char chunk on the lock screen.
     Full analysis lives in the HTML email.
     """
@@ -1712,11 +1729,11 @@ def run_morning_briefing_v2(
     html_email = format_morning_html(ai_brief, data)
     print(f"✓ HTML email formatted ({len(html_email)} bytes)")
 
-    print("\n[3/4] Formatting plain text iMessage...")
+    print("\n[3/4] Formatting plain-text email fallback...")
     text_message = format_morning_text(ai_brief, data)
     print(f"✓ Plain text formatted ({len(text_message)} chars)")
 
-    print("\n[4/4] Sending via Apple Mail and Messages...")
+    print("\n[4/4] Sending via Apple Mail...")
 
     # Send HTML email
     email_sent = send_html_email(
@@ -1725,9 +1742,6 @@ def run_morning_briefing_v2(
         html_body=html_email,
     )
 
-    # Send iMessage (uses existing send_imessage from morning_briefing.py)
-    # This function must be imported or called from the main script
-    imessage_sent = send_imessage(imessage_recipient, text_message)
 
     # Summary
     print("\n" + "=" * 70)
@@ -1787,21 +1801,15 @@ def _format_snapshot_text(snapshot: dict[str, Any]) -> str:
     return "\n".join(lines) if lines else "  Market data unavailable"
 
 
-# NOTE: For iMessage delivery, reuse the existing send_imessage() function
-# from morning_briefing.py — it has proper chunking, retry logic, and the
-# correct AppleScript pattern for the iMac's Messages.app configuration.
-# Do NOT rewrite the iMessage sender here.
-
-
 # ============================================================================
 # 3b. PLAIN TEXT FORMATTING — MARKET RECAP (afternoon / post-close)
 # ============================================================================
 
 def format_recap_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
     """
-    Format the post-close market recap as plain text for iMessage delivery.
+    Format the post-close market recap as plain text (email fallback).
     Parallel to format_morning_text — editorial voice at the top, key data
-    below, optimized for multi-chunk iMessage delivery.
+    below.  Used as the email body when HTML rendering fails.
     """
     market_close = data.get("market_close", {}) or {}
     portfolio_perf = data.get("portfolio_perf", []) or []

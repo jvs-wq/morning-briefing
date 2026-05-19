@@ -1,6 +1,17 @@
 # Morning Briefing
 
-Automated stock-market intelligence brief for a concentrated investment portfolio. Monitors 84 holdings (70 stocks + 14 ETFs) and delivers AI-generated editorial analysis via HTML email and a slim iMessage teaser on a weekday + weekend-aware schedule.
+Automated stock-market intelligence brief for a concentrated investment portfolio. Monitors 84 holdings (70 stocks + 14 ETFs) and delivers AI-generated editorial analysis via HTML email on a weekday + weekend-aware schedule. Email-only as of 2026-05-18.
+
+## v2.6 — Anti-Drift Hardening (2026-05-19)
+
+Closes the May-2026 deploy-drift bug class: Drive edits never reaching the iMac production tree (and vice-versa), letting stale code keep firing the iMessage briefs after they were "removed" in spec.
+
+- **iMessage fully stripped** — removed `send_imessage()`, `_chunk_message()`, `IMESSAGE_RECIPIENT`, and every call site in `morning_briefing.py` (5 send blocks) and `morning_briefing_redesign.py` (run_morning_briefing_v2 send + obsolete NOTE block). Monitor alerts now route through Apple Mail. `format_morning_text()` survives as the plain-text email fallback when HTML rendering fails — no iMessage path.
+- **Anti-regression guard** — `_v2_6_guard()` runs on module import in `morning_briefing.py`. Scans all three Python files; exits 99 if any forbidden iMessage symbol re-appears. The guard's own forbidden-symbols regex is excluded via marker-bracketed block stripping.
+- **Drive ↔ production lockstep** — new `scripts/deploy.sh` SHA-compares Drive against production, refuses to deploy if a Drive file fails `py_compile`, copies if drift exists, runs the v2.6 guard, then `git commit` + `push origin main`, optionally `--reload` the LaunchAgents.
+- **Auto-sync LaunchAgent** — `com.briefing.deploy.plist` invokes `deploy.sh --reload` at 4:50 AM Mon–Fri (10 min before the morning brief), guaranteeing Drive → production within one cycle of any edit.
+- **Staleness alarm in monitor** — `check_deploy_freshness()` in `briefing_monitor.py` SHA-compares prod against Drive every monitor run; if they drift, the monitor emails an alert before the run-health summary.
+- **AI freshness rule** — `BRIEFING_SYSTEM_PROMPT` now carries an explicit v2.6 rule: an earnings entry qualifies for the WHAT MATTERS lead only if `days_since == 0` or its scheduled date is today; older prints belong in EARNINGS INTELLIGENCE as cycle context. `morning_briefing.py` enriches both `scorecard` and `earnings` records with `days_since` before passing the payload to the AI. This kills the AFRM-as-today's-news class of bug.
 
 ## v3 — Earnings Season Enrichment (2026-04-14)
 
@@ -9,7 +20,7 @@ Major earnings data upgrade for Q1 2026 earnings season:
 - **4-week persistent lookback** — `earnings_history.json` accumulates results across runs, auto-prunes entries older than 28 days. Manual corrections (via `source: manual_correction`) survive API overwrites.
 - **Revenue estimates vs actuals** — shown in scorecard and upcoming earnings calendar (from Finnhub)
 - **AI guidance analysis** — Claude infers raised/lowered/in-line from news headlines after each report
-- **Sell-side analyst actions** — upgrades, downgrades, and price target changes via yfinance (7-day window). iMessage shows material changes only (rating changes, PT >10%, new coverage); full list in HTML email.
+- **Sell-side analyst actions** — upgrades, downgrades, and price target changes via yfinance (7-day window) shown in the HTML email.
 - **BCM holdings update** — at the time, 74 stocks + 15 ETFs = 89 total. *Has since been refreshed 2026-04-23 to 70 stocks + 14 ETFs = 84 total — see `PROJECT_STATE.md` and the heading line at the top of this README.*
 - **dotenv fix** — `_load_dotenv()` uses direct assignment instead of `setdefault` to avoid empty shell env var masking
 
@@ -27,18 +38,19 @@ Redesigned from plain-text data dump to AI-powered editorial brief. Claude Sonne
 - **Analyst actions** — sell-side upgrades/downgrades/PT changes (7-day window)
 - **AI-filtered news** — relevant headlines selected and interpreted by Claude API
 - **Strategy reads (recap + weekend_preview)** — long-form analyst posts (Stratechery, Asianometry) from the last 48h surfaced in a "Strategy & Analysis" section, with GUID-deduped state shared across recap and weekend_preview so each post appears once
-- **HTML email** — professional typography with data appendix tables
-- **Slim iMessage teaser** — single chunk, ~750–900 chars, lead paragraph + market snapshot + pointer to email. (Old multi-chunk text dump was retired 2026-04-22.)
+- **HTML email** — professional typography with data appendix tables (plain-text fallback when HTML rendering fails)
 - **Social intelligence** — *the morning brief no longer calls LunarCrush as of 2026-04-26.* Daily LunarCrush coverage lives in the sibling [`lunarcrush-brief`](https://github.com/jvs-wq/lunarcrush-brief) repo (evening 5 PM PT, Saturday weekly digest, Monday review).
 
 ## Architecture
 
 ```
-morning_briefing.py          — Main script: data collection + all four modes (~4,225 lines)
-morning_briefing_redesign.py — AI briefs, HTML email, iMessage text for all four modes (~2,501 lines)
-briefing_monitor.py          — Health monitoring and alerting
+morning_briefing.py          — Main script: data collection + all four modes
+morning_briefing_redesign.py — AI briefs, HTML email, plain-text fallback for all four modes
+briefing_monitor.py          — Health monitoring, alerting, deploy-drift detection
 launchd/                     — Launchd plists + idempotent install.sh (source of truth for the schedule)
 scripts/verify_schedule.sh   — Schedule health smoke-test (also runs as a one-shot check)
+scripts/deploy.sh            — Drive→prod→GitHub deploy script (used by com.briefing.deploy LaunchAgent)
+migrations/                  — Version migration scripts (v2_6_imessage_removal_and_safeguards.py et al.)
 requirements.txt             — Python dependencies
 earnings_history.json        — Persistent 4-week earnings lookback (gitignored, runtime)
 strategy_reads_seen.json     — Stratechery + Asianometry GUID dedup state (gitignored, runtime)
@@ -81,12 +93,13 @@ The five plists in `launchd/` are the source of truth for the schedule. Install 
 bash launchd/install.sh
 ```
 
-The script copies every `*.plist` in `launchd/` to `~/Library/LaunchAgents/` and `launchctl load`s them. It's idempotent — safe to re-run. You should see five agents loaded: `com.briefing.morning`, `com.briefing.premarket`, `com.briefing.recap`, `com.briefing.weekend_preview`, `com.briefing.monitor`.
+The script copies every `*.plist` in `launchd/` to `~/Library/LaunchAgents/` and `launchctl load`s them. It's idempotent — safe to re-run. You should see six agents loaded: `com.briefing.deploy`, `com.briefing.morning`, `com.briefing.premarket`, `com.briefing.recap`, `com.briefing.weekend_preview`, `com.briefing.monitor`.
 
 Schedule details:
+- `deploy` fires at 4:50 AM Mon–Fri — runs `scripts/deploy.sh --reload` so Drive edits land in production before the 5:00 AM morning brief and the LaunchAgents are reloaded with the fresh code.
 - `morning` / `premarket` / `recap` use an array of five `StartCalendarInterval` dicts (Weekday 1–5) so they only fire on weekdays.
 - `weekend_preview` uses a single dict with `Weekday=0` (Sunday) at 6:00 PM PT.
-- `monitor` is a long-running watchdog (no schedule).
+- `monitor` runs at 5:10 AM / 6:30 AM / 1:25 PM Mon–Fri and includes a deploy-drift check (email alert if production SHAs diverge from Drive).
 
 ## Disaster Recovery
 
@@ -102,7 +115,7 @@ If this iMac dies, here's the full rebuild path on a fresh macOS box:
    python3 morning_briefing.py morning
    python3 morning_briefing.py weekend_preview
    ```
-   Both should produce console output, an HTML email, and an iMessage. iMessage uses AppleScript — macOS will prompt for Messages.app automation permission the first time.
+   Both should produce console output and an HTML email (Apple Mail via AppleScript — macOS will prompt for Mail.app automation permission the first time).
 7. **(Optional) Restore runtime state**: `earnings_history.json` (4-week earnings lookback) and `strategy_reads_seen.json` (article-GUID dedup) are gitignored runtime files. They rebuild themselves over time, but copying them from backup avoids a re-grading window after recovery.
 8. **Vital Knowledge / Gmail**: if you use it, run `python3 morning_briefing.py --setup-gmail` to re-authorize the Gmail OAuth flow. The OAuth token is machine-local and gitignored.
 
