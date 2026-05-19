@@ -3479,14 +3479,10 @@ def run_lunarcrush_brief():
     email_subject = f"LunarCrush Brief - {today}"
     email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, brief)
 
-    if imessage_success and email_success:
-        print("\n✓ LunarCrush brief delivered via iMessage and Email!")
-    elif imessage_success:
-        print("\n⚠ Brief sent via iMessage only (email failed)")
-    elif email_success:
-        print("\n⚠ Brief sent via Email only (iMessage failed)")
+    if email_success:
+        print("\n✓ LunarCrush brief delivered via Email!")
     else:
-        print("\n✗ Delivery failed - check iMessage and Mail configuration")
+        print("\n✗ Delivery failed - check Mail configuration")
 
 
 # ============================================================================
@@ -3769,14 +3765,10 @@ def run_morning_briefing():
         email_subject = f"Morning Briefing - {today}"
         email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, text_message)
 
-    if imessage_success and email_success:
-        print("\n✓ Morning briefing delivered via iMessage and Email!")
-    elif imessage_success:
-        print("\n⚠ Briefing sent via iMessage only (email failed)")
-    elif email_success:
-        print("\n⚠ Briefing sent via Email only (iMessage failed)")
+    if email_success:
+        print("\n✓ Morning briefing delivered via Email!")
     else:
-        print("\n✗ Delivery failed - check iMessage and Mail configuration")
+        print("\n✗ Delivery failed - check Mail configuration")
 
 
 def run_market_recap():
@@ -3913,14 +3905,10 @@ def run_market_recap():
     else:
         email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, recap_text)
 
-    if imessage_success and email_success:
-        print("\n✓ Market recap delivered via iMessage and Email!")
-    elif imessage_success:
-        print("\n⚠ Recap sent via iMessage only (email failed)")
-    elif email_success:
-        print("\n⚠ Recap sent via Email only (iMessage failed)")
+    if email_success:
+        print("\n✓ Market recap delivered via Email!")
     else:
-        print("\n✗ Delivery failed - check iMessage and Mail configuration")
+        print("\n✗ Delivery failed - check Mail configuration")
 
 
 def run_premarket_update():
@@ -4037,14 +4025,10 @@ def run_premarket_update():
     else:
         email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, text_message)
 
-    if imessage_success and email_success:
-        print("\n✓ Pre-market update delivered via iMessage and Email!")
-    elif imessage_success:
-        print("\n⚠ Update sent via iMessage only (email failed)")
-    elif email_success:
-        print("\n⚠ Update sent via Email only (iMessage failed)")
+    if email_success:
+        print("\n✓ Pre-market update delivered via Email!")
     else:
-        print("\n✗ Delivery failed - check iMessage and Mail configuration")
+        print("\n✗ Delivery failed - check Mail configuration")
 
 
 def run_weekend_preview():
@@ -4112,14 +4096,10 @@ def run_weekend_preview():
     email_subject = f"Weekend Preview – {today}"
     email_success = send_html_email(CONFIG["EMAIL_RECIPIENT"], email_subject, html_email)
 
-    if imessage_success and email_success:
-        print("\n✓ Weekend preview delivered via iMessage and Email!")
-    elif imessage_success:
-        print("\n⚠ Preview sent via iMessage only (email failed)")
-    elif email_success:
-        print("\n⚠ Preview sent via Email only (iMessage failed)")
+    if email_success:
+        print("\n✓ Weekend preview delivered via Email!")
     else:
-        print("\n✗ Delivery failed - check iMessage and Mail configuration")
+        print("\n✗ Delivery failed - check Mail configuration")
 
 
 def main():
