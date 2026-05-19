@@ -382,10 +382,6 @@ def main():
         sys.exit(0)
 
 
-if __name__ == "__main__":
-    main()
-
-
 # === v2.6 staleness alarm ===
 def check_deploy_freshness() -> tuple[bool, list[str]]:
     """Compare production code SHAs against Drive mirror. Returns (drift_found, lines)."""
@@ -409,4 +405,9 @@ def check_deploy_freshness() -> tuple[bool, list[str]]:
             drift.append(f"{name}: prod={ph[:8]} drive={dh[:8]} (drive age {age_h:.1f}h)")
     return (len(drift) > 0), drift
 # === end v2.6 staleness alarm ===
+
+
+if __name__ == "__main__":
+    main()
+
 
