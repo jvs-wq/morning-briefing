@@ -3730,18 +3730,11 @@ def run_morning_briefing():
         "analyst_actions": analyst_actions,
     }
 
+    # Narrow scope: only AI generation failures should trigger the legacy
+    # fallback. Downstream formatting errors must not discard a working AI brief.
     try:
         ai_brief = generate_ai_morning_brief(briefing_data, CONFIG["ANTHROPIC_API_KEY"])
         print("  ✓ AI brief generated")
-
-        # Format HTML email
-        html_email = format_morning_html(ai_brief, briefing_data)
-        print(f"  ✓ HTML email: {len(html_email):,} bytes")
-
-        # Format plain text iMessage
-        text_message = format_morning_text(ai_brief, briefing_data)
-        print(f"  ✓ Plain text: {len(text_message):,} chars")
-
     except Exception as e:
         print(f"  ✗ AI brief failed: {e}")
         print("  Falling back to legacy formatter...")
@@ -3749,10 +3742,18 @@ def run_morning_briefing():
                                        len(all_tickers), market_snapshot, premarket_movers, rsi_alerts, vk_highlights,
                                        analyst_actions=analyst_actions)
         html_email = None
+    else:
+        # Format HTML email (no plain-text twin — iMessage path removed in v2.6)
+        html_email = format_morning_html(ai_brief, briefing_data)
+        text_message = None
+        print(f"  ✓ HTML email: {len(html_email):,} bytes")
 
-    # Print to console
+    # Print to console (HTML is too large to dump; show plain-text fallback if used)
     print("\n" + "=" * 50)
-    print(text_message)
+    if text_message:
+        print(text_message)
+    else:
+        print(f"HTML brief built ({len(html_email):,} bytes) — see Mail for rendered output.")
     print("=" * 50)
 
     # Send via Email (HTML if available, plain text fallback)
