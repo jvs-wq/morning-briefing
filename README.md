@@ -2,6 +2,16 @@
 
 Automated stock-market intelligence brief for a concentrated investment portfolio. Monitors 84 holdings (70 stocks + 14 ETFs) and delivers AI-generated editorial analysis via HTML email on a weekday + weekend-aware schedule. Email-only as of 2026-05-18.
 
+## v2.7 — Stale-Lead + Bearish-Hyperbole Fix (2026-05-22)
+
+Closes a class of bug surfaced by the 2026-05-22 morning brief, which led WHAT MATTERS with an 11-day-old HIMS earnings miss framed as "catastrophic" and citing a sign-flip-artifact `-1433.3%` surprise. Three failure modes stacked: a soft `days_since` numeric field that the AI overlooked when a fresh BofA HIMS downgrade gave it a "current hook"; an asymmetric forbidden-words list that banned bullish hype but allowed bearish hype; and an unsuppressed `surprise_pct` that became meaningless when EPS flipped sign.
+
+- **Hard payload tag for stale prints** — `_build_ai_payload` in `morning_briefing_redesign.py` now prepends `[STALE: Nd ago — CONTEXT ONLY, DO NOT LEAD]` to every scorecard row with `days_since > 1`. A string label is harder to ignore than a numeric field.
+- **Sign-flip suppression** — when EPS estimate and actual have opposite signs, OR `|surprise_pct| > 200`, the percentage is replaced with `(sign flip — % surprise not meaningful)`. Absolute EPS values still print.
+- **Fresh-hook-on-stale-print rule** — `BRIEFING_SYSTEM_PROMPT` now says a fresh analyst action referencing a stale print does NOT make the print fresh. Lead with the rating change and the tape's reaction, not the underlying print. Explicit quiet-morning escape valve: "no same-day name-specific catalyst" is a valid lead — naming the quiet beats manufacturing drama.
+- **Sign-flip precision rule (prompt)** — codifies the payload behavior: when estimate ≥ 0 and actual < 0 (or vice versa), or `|surprise_pct| > 200`, do not cite the percentage. Quote absolute EPS instead.
+- **Symmetric forbidden-words list** — added bearish hyperbole ("catastrophic," "catastrophe," "collapse(d/ing)," "breakdown," "disaster(ous)," "carnage," "bloodbath," "implosion(s)/implode(d)," "death spiral," "annihilated," "decimated") to the bullish-only list across all four prompts (morning, recap, premarket, weekend).
+
 ## v2.6 — Anti-Drift Hardening (2026-05-19)
 
 Closes the May-2026 deploy-drift bug class: Drive edits never reaching the iMac production tree (and vice-versa), letting stale code keep firing the iMessage briefs after they were "removed" in spec.

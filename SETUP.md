@@ -2,8 +2,18 @@
 
 **Purpose:** Everything needed to rebuild the Morning Briefing system from scratch on a clean Mac. If this file plus the other files in this Drive folder exist, a new Claude session (or a human) can fully reconstruct the running system.
 
-**Last Updated:** May 19, 2026 (v2.6 anti-drift hardening — see PROJECT_STATE.md changelog)
+**Last Updated:** May 22, 2026 (v2.7 stale-lead + bearish-hyperbole fix — see PROJECT_STATE.md changelog)
 **Owner:** Jeff Vessler | jvs@blumecapital.com | Blume Capital
+
+## v2.7 Quick Reference (2026-05-22)
+
+Layered on top of v2.6's anti-drift hardening. The brief no longer leads with stale earnings prints even when fresh ambient signal (analyst actions, downgrades) provides plausible cover, and the voice rules now constrain bearish hyperbole symmetrically with bullish.
+
+1. **Hard payload tag for stale prints** — `_build_ai_payload` in `morning_briefing_redesign.py` prefixes every scorecard row with `days_since > 1` as `[STALE: Nd ago — CONTEXT ONLY, DO NOT LEAD]`. String label — harder to ignore than the numeric `days_since` field alone.
+2. **Sign-flip suppression** — when EPS estimate and actual have opposite signs, OR `|surprise_pct| > 200`, the percentage is replaced in the payload with `(sign flip — % surprise not meaningful)`. Absolute EPS values still print.
+3. **Fresh-hook-on-stale-print rule** in `BRIEFING_SYSTEM_PROMPT`: a fresh analyst action referencing a stale print does NOT make the print fresh. Lead with the rating change and the tape reaction, not the print. Includes an explicit quiet-morning escape valve.
+4. **Sign-flip precision rule** in `BRIEFING_SYSTEM_PROMPT`: do not cite percentages from near-zero denominators; quote absolute EPS instead.
+5. **Symmetric forbidden-words list** across all four prompts (morning, recap, premarket, weekend): added bearish hyperbole — "catastrophic," "catastrophe," "collapse(d/ing)," "breakdown," "disaster(ous)," "carnage," "bloodbath," "implosion," "death spiral," "annihilated," "decimated."
 
 ## v2.6 Quick Reference (2026-05-19)
 
@@ -13,7 +23,7 @@ If you are reading this after a fresh rebuild, the system now expects six Launch
 2. **`scripts/deploy.sh`** is the only correct way to push code from Drive to production. Manual `cp` works in a pinch but skips the py_compile validation and the v2.6 anti-regression guard.
 3. **`_v2_6_guard()` in `morning_briefing.py`** runs on import and exits 99 if any iMessage symbol (`send_imessage`, `IMESSAGE_RECIPIENT`, `_chunk_message`) reappears. This is intentional: the entire iMessage send path was removed in v2.6 and the guard prevents accidental re-introduction.
 4. **Deploy-drift alarm in `briefing_monitor.py`** SHA-compares production against Drive every monitor run and emails an alert if they drift.
-5. **AI freshness rule** in `BRIEFING_SYSTEM_PROMPT` requires `days_since == 0` (or scheduled today) for an earnings event to qualify for the WHAT MATTERS lead. `morning_briefing.py` enriches the payload with `days_since` automatically.
+5. **AI freshness rule** in `BRIEFING_SYSTEM_PROMPT` requires `days_since == 0` (or scheduled today) for an earnings event to qualify for the WHAT MATTERS lead. `morning_briefing.py` enriches the payload with `days_since` automatically. Strengthened by v2.7 with a hard payload tag and a fresh-hook-on-stale-print rule.
 
 Email-only delivery — there is no iMessage path anywhere in v2.6+.
 
