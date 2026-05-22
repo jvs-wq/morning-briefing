@@ -51,8 +51,8 @@ NARRATIVE-vs-TAPE CONSISTENCY (hard rule — do not violate):
 
 VOICE & REGISTER (hard rule — do not violate):
 - The reader is a 23-year portfolio manager who knows every holding's thesis cold. He is not the audience for Yahoo-style headlines, hype framing, or analyst-of-the-year theatre.
-- Forbidden words and phrases — use the underlying mechanism instead: "surge," "soar," "rocket," "explode," "crushed," "stunning," "blowout," "monster print," "blockbuster," "vindicates the bulls," "validates the bull case," "thesis validation," "AI demand surge," exclamation points, rhetorical questions to the reader.
-- Replace adjectives with magnitude + direction + mechanism. Wrong: "PLTR surged on stunning AI demand." Right: "PLTR +X% on a Y guide raise; commercial segment commentary called out [headline detail]." Numbers and the mechanism do the work, not adverbs.
+- Forbidden words and phrases — use the underlying mechanism instead. Bullish hyperbole: "surge," "soar," "rocket," "explode," "crushed," "stunning," "blowout," "monster print," "blockbuster," "vindicates the bulls," "validates the bull case," "thesis validation," "AI demand surge." Bearish hyperbole: "catastrophic," "catastrophe," "collapse," "collapsed," "collapsing," "breakdown," "disaster," "disastrous," "carnage," "bloodbath," "implosion," "implodes," "imploded," "death spiral," "annihilated," "decimated." Also forbidden: exclamation points, rhetorical questions to the reader.
+- Replace adjectives with magnitude + direction + mechanism. Wrong: "PLTR surged on stunning AI demand." Right: "PLTR +X% on a Y guide raise; commercial segment commentary called out [headline detail]." Wrong: "HIMS earnings catastrophically missed." Right: "HIMS reported EPS of $-0.40 vs $0.03 estimate; the line management did not address is unit economics." Numbers and the mechanism do the work, not adverbs — applies symmetrically to bull and bear framing.
 - Register is a buy-side morning note, not financial media. Direct, declarative, lower-temperature. Opinionated is fine; theatrical is not. "Direct and opinionated" means a confident call, not a loud one.
 
 EARNINGS DEPTH (hard rule — do not violate):
@@ -85,6 +85,10 @@ CRITICAL NOTES:
   Each entry has a `days_since` field.  If `days_since > 1`, the print is
   history — do NOT lead with it as a current-day catalyst.  Reference it
   only as context for the cycle read.
+- Stale rows are now also marked with an inline `[STALE: Nd ago — CONTEXT
+  ONLY, DO NOT LEAD]` prefix in the scorecard text. Treat that prefix as
+  authoritative: a row carrying it is INELIGIBLE for the WHAT MATTERS lead,
+  regardless of how dramatic the surprise number is.
 - "Upcoming" means an earnings entry whose `date` is today or in the
   future.  If you can't find one for a name you want to discuss, do not
   invent one — say "no scheduled catalyst this week."
@@ -95,6 +99,37 @@ CRITICAL NOTES:
   lead ONLY if `days_since == 0` (reported today, including after-hours
   yesterday) or its scheduled date is today.  Older prints belong in
   EARNINGS INTELLIGENCE as cycle context.
+
+## v2.7 fresh-hook-on-stale-print rule (do not violate)
+- A FRESH analyst action (upgrade, downgrade, PT change) that references a
+  STALE earnings print does NOT make the print fresh. Lead with the rating
+  change itself and what it implies about Street positioning — do not
+  re-litigate the underlying print as today's catalyst.
+- Example anti-pattern to avoid: "[Stock] missed earnings 11 days ago. BofA
+  downgraded today to $X target. This signals unit economics breakdown."
+  Wrong — the lead recycles a stale print as today's news. Right framing:
+  "BofA cut [Stock] to $X (from $Y) on [stated reason]; the move comes 11
+  days after the Q-print and reflects Street finally repricing [the
+  specific risk]. Stock has [traded X% lower since the print / held in /
+  retraced]." The fresh hook IS the rating change and the tape's reaction
+  to it — not the print itself.
+- If today's bundle has NO same-day catalyst for the portfolio (no
+  >3% pre-market mover, no after-hours print, no breaking macro, no fresh
+  scheduled earnings today), say so plainly in WHAT MATTERS: "Quiet open.
+  No same-day name-specific catalyst in the book; the day's signal is in
+  [the macro print at 8:30 / the analyst action cluster on X / the
+  earnings calendar into Thursday]." A quiet morning is information.
+  Manufacturing drama from stale prints is worse than naming the quiet.
+
+## v2.7 sign-flip precision rule (do not violate)
+- When an EPS print flips sign (estimate ≥ 0 and actual < 0, or vice
+  versa) or `surprise_pct` magnitude exceeds 200%, the percentage is a
+  mathematical artifact of a near-zero denominator and is NOT meaningful
+  magnitude information. Do NOT cite it.
+- Quote the print in absolute terms instead: "EPS $-0.40 vs $0.03 estimate
+  (sign flip — % surprise not meaningful)." The reader is a 23-year PM —
+  he knows $-0.40 vs $0.03 is a bad print without a fake-precision
+  percentage attached.
 """
 
 
@@ -227,6 +262,24 @@ PRE-MARKET MOVERS (>3% or strategically important):
     if scorecard:
         for item in scorecard[:15]:
             beat_status = "BEAT" if item.get('beat') else "MISS"
+            # v2.7 stale tag — hard label for any print older than 1 day
+            ds = item.get('days_since')
+            stale_prefix = ""
+            if isinstance(ds, (int, float)) and ds > 1:
+                stale_prefix = f"[STALE: {int(ds)}d ago — CONTEXT ONLY, DO NOT LEAD] "
+            # v2.7 sign-flip handling — suppress fake-precision surprise_pct
+            eps_a = item.get('eps_actual')
+            eps_e = item.get('eps_estimate')
+            surp = item.get('surprise_pct')
+            sign_flip = (
+                isinstance(eps_a, (int, float)) and isinstance(eps_e, (int, float))
+                and ((eps_a < 0 and eps_e >= 0) or (eps_a >= 0 and eps_e < 0))
+            )
+            magnitude_garbage = isinstance(surp, (int, float)) and abs(surp) > 200
+            if sign_flip or magnitude_garbage:
+                surp_str = "(sign flip — % surprise not meaningful)"
+            else:
+                surp_str = f"({surp}%)" if surp is not None else ""
             rev_str = ""
             rev_a = item.get('rev_actual')
             rev_e = item.get('rev_estimate')
@@ -236,7 +289,7 @@ PRE-MARKET MOVERS (>3% or strategically important):
                 rev_str = f" | Rev: {rev_a_fmt} vs {rev_e_fmt} ({'beat' if item.get('rev_beat') else 'miss'})"
             guidance = item.get('guidance_signal', '')
             guidance_str = f" | Guidance: {guidance}" if guidance else ""
-            payload += f"- {item.get('symbol', 'N/A')}: {beat_status} | EPS: {item.get('eps_actual', 'N/A')} vs {item.get('eps_estimate', 'N/A')} ({item.get('surprise_pct', 'N/A')}%){rev_str}{guidance_str}\n"
+            payload += f"- {stale_prefix}{item.get('symbol', 'N/A')}: {beat_status} | EPS: {eps_a if eps_a is not None else 'N/A'} vs {eps_e if eps_e is not None else 'N/A'} {surp_str}{rev_str}{guidance_str}\n"
     else:
         payload += "- No recent earnings in portfolio\n"
 
@@ -352,8 +405,8 @@ NARRATIVE-vs-TAPE CONSISTENCY (hard rule — do not violate):
 
 VOICE & REGISTER (hard rule — do not violate):
 - The reader is a 23-year portfolio manager who knows every holding's thesis cold. He is not the audience for Yahoo-style headlines, hype framing, or analyst-of-the-year theatre.
-- Forbidden words and phrases — use the underlying mechanism instead: "surge," "soar," "rocket," "explode," "crushed," "stunning," "blowout," "monster print," "blockbuster," "vindicates the bulls," "validates the bull case," "thesis validation," "AI demand surge," exclamation points, rhetorical questions to the reader.
-- Replace adjectives with magnitude + direction + mechanism. Wrong: "X surged on a stunning print." Right: "X +Y% on a Z guide raise; segment commentary called out [headline detail]." Numbers and the mechanism do the work, not adverbs.
+- Forbidden words and phrases — use the underlying mechanism instead. Bullish hyperbole: "surge," "soar," "rocket," "explode," "crushed," "stunning," "blowout," "monster print," "blockbuster," "vindicates the bulls," "validates the bull case," "thesis validation," "AI demand surge." Bearish hyperbole: "catastrophic," "catastrophe," "collapse," "collapsed," "collapsing," "breakdown," "disaster," "disastrous," "carnage," "bloodbath," "implosion," "implodes," "imploded," "death spiral," "annihilated," "decimated." Also forbidden: exclamation points, rhetorical questions to the reader.
+- Replace adjectives with magnitude + direction + mechanism. Wrong: "X surged on a stunning print." Right: "X +Y% on a Z guide raise; segment commentary called out [headline detail]." Wrong: "Y collapsed on a catastrophic miss." Right: "Y -Z% on EPS $-0.40 vs $0.03 estimate; management did not address the unit-economics question." Numbers and the mechanism do the work, not adverbs — applies symmetrically to bull and bear framing.
 - Register is a buy-side post-close note, not financial media. Direct, declarative, lower-temperature. Opinionated is fine; theatrical is not. "Direct and opinionated" means a confident call, not a loud one.
 
 EARNINGS DEPTH (hard rule — do not violate):
@@ -1981,7 +2034,7 @@ EARNINGS GROUNDING (hard rule): Beat/miss calls come ONLY from the JUST PRINTED 
 
 NARRATIVE-vs-TAPE CONSISTENCY (hard rule): If a ticker beat or raised but is trading down pre-market, the editorial must name and explain the gap (sell-the-news, guidance footnote, positioning unwind) — not lead with a bullish call while the tape is red. The bullish lead must survive the pre-market quote.
 
-VOICE & REGISTER (hard rule): Sober buy-side voice. The reader is a 23-year PM who knows the names. Forbidden words: "surge," "soar," "rocket," "crushed," "blowout," "stunning," "thesis validation," "AI demand surge," "vindicates the bulls," exclamation points, rhetorical questions. Replace adjectives with magnitude + mechanism — numbers and the mechanism do the work, not adverbs. Register is a buy-side note, not financial media.
+VOICE & REGISTER (hard rule): Sober buy-side voice. The reader is a 23-year PM who knows the names. Forbidden bullish hyperbole: "surge," "soar," "rocket," "crushed," "blowout," "stunning," "thesis validation," "AI demand surge," "vindicates the bulls." Forbidden bearish hyperbole: "catastrophic," "catastrophe," "collapse," "collapsed," "breakdown," "disaster," "carnage," "bloodbath," "implosion," "death spiral," "annihilated," "decimated." Also forbidden: exclamation points, rhetorical questions. Replace adjectives with magnitude + mechanism — numbers and the mechanism do the work, not adverbs, symmetrically on both sides. Register is a buy-side note, not financial media.
 
 EARNINGS DEPTH (hard rule): When grading a JUST PRINTED report, do not just write "X beat." Decompose: EPS vs revenue separately (rev miss + EPS beat is a different print from a double beat — say which one), the bundle's guidance tag (raised / lowered / in-line) when present, and the segment color in any related headline. The pre-market reaction tells you what the Street thought of the guide. If the bundle has no guidance color for a name, say so — do not invent one. For pending BMO reporters in `bell_plan`, name the specific line item that matters in the release; never use a generic "watch the print."
 
@@ -2332,7 +2385,7 @@ EARNINGS GROUNDING (hard rule): If you reference last week's prints, beat/miss c
 
 NARRATIVE-vs-TAPE CONSISTENCY (hard rule): If a holding's print was bullish but its Friday close was red (or vice versa), name the gap — don't write a positive editorial against a tape that contradicts it.
 
-VOICE & REGISTER (hard rule): Sober buy-side voice. The reader is a 23-year PM who knows the names. Forbidden words: "surge," "soar," "rocket," "crushed," "blowout," "stunning," "thesis validation," "AI demand surge," "vindicates the bulls," exclamation points, rhetorical questions. Replace adjectives with magnitude + mechanism — numbers and the mechanism do the work, not adverbs. Register is a Sunday-evening buy-side note, not a financial-media weekend wrap.
+VOICE & REGISTER (hard rule): Sober buy-side voice. The reader is a 23-year PM who knows the names. Forbidden bullish hyperbole: "surge," "soar," "rocket," "crushed," "blowout," "stunning," "thesis validation," "AI demand surge," "vindicates the bulls." Forbidden bearish hyperbole: "catastrophic," "catastrophe," "collapse," "collapsed," "breakdown," "disaster," "carnage," "bloodbath," "implosion," "death spiral," "annihilated," "decimated." Also forbidden: exclamation points, rhetorical questions. Replace adjectives with magnitude + mechanism — numbers and the mechanism do the work, not adverbs, symmetrically on both sides. Register is a Sunday-evening buy-side note, not a financial-media weekend wrap.
 
 EARNINGS DEPTH (hard rule): If you reference last week's prints, do not just write "X beat." Decompose: EPS vs revenue separately (rev miss + EPS beat ≠ double beat — say which one), the scorecard's `Guidance:` tag (raised / lowered / in-line) when present, and any segment- or product-level color from the weekend headlines. The Friday tape after the print tells you what the Street thought of the guide. If the bundle has no guidance color for a name, say so — do not invent one. For Monday-morning pending reporters, name the specific KPI that matters; never use generic "watch the print" framing.
 

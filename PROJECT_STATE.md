@@ -1,7 +1,7 @@
 # Morning Briefing — Project State
 
-**Last updated:** 2026-05-19
-**Status:** Production — v2.6 anti-drift hardening deployed
+**Last updated:** 2026-05-22
+**Status:** Production — v2.7 stale-lead + bearish-hyperbole fix deployed
 
 ---
 
@@ -23,6 +23,23 @@ The morning briefing system runs on Jeff's iMac (`Jeffs-iMac`) via launchd. Six 
 - **Market snapshot incomplete:** VIX / oil / gold / BTC / DXY still N/A — need data-fetch expansion.
 - **Python 3.9 EOL:** iMac on 3.9.6, deprecation warnings from `google-auth` / `google-api-core`. Upgrade deferred.
 - **`~/My Drive/` is not actually synced.** The user's "My Drive" at `~/My Drive/` is a local directory, not a Google Drive mount. The real Google Drive sync points at `~/Library/CloudStorage/GoogleDrive-jeffstclaire@gmail.com/My Drive/` and has a stale May-12 copy. As far as the briefing system goes, this is fine — `deploy.sh` uses `~/My Drive/` (where Cowork edits land) as the source. But for the user's 3-machine sync goal, the other two machines aren't actually getting the latest. Flagged for separate follow-up.
+
+## Recent Changes (2026-05-22 — v2.7 stale-lead + bearish-hyperbole fix)
+
+**Trigger.** 2026-05-22 morning brief led WHAT MATTERS with an 11-day-old HIMS earnings miss (date 2026-05-11, days_since=11), framed as "catastrophic" and citing a sign-flip-artifact `-1433.3%` surprise. Three failure modes stacked:
+
+1. **Soft freshness rule.** v2.6 put `days_since` on each scorecard record as a numeric field. With a quiet tape (zero >3% pre-market movers) and a fresh BofA HIMS downgrade in `analyst_actions`, the AI used the rating change as a "current hook" to re-litigate the stale print as the lead. The numeric field was easy to overlook in a payload of dozens of rows.
+2. **Asymmetric forbidden-words list.** Voice rules covered bullish hyperbole ("surge," "soar," "rocket") but not bearish ("catastrophic," "collapse," "breakdown"). "Catastrophic" walked right through.
+3. **Sign-flip precision laundering.** When EPS goes from a positive estimate to a negative actual, `surprise_pct` from yfinance becomes a near-zero-denominator artifact (-1433.3% here). The AI quoted it as if it were a magnitude claim.
+
+**Changes.**
+1. **Payload-level stale tag** (`_build_ai_payload` in `morning_briefing_redesign.py`). For every scorecard row with `days_since > 1`, the row is now prefixed with `[STALE: Nd ago — CONTEXT ONLY, DO NOT LEAD]` before the BEAT/MISS tag. String-level label — harder to ignore than a numeric field.
+2. **Payload-level sign-flip suppression.** When EPS estimate and actual have opposite signs, OR `|surprise_pct| > 200`, the % is replaced with `(sign flip — % surprise not meaningful)`. The absolute EPS values are still shown.
+3. **Prompt: v2.7 fresh-hook-on-stale-print rule.** Explicit anti-pattern: a fresh analyst action referencing a stale print does NOT make the print fresh. Lead with the rating change and its tape reaction, not the underlying print. Quiet-morning escape valve: "no same-day name-specific catalyst" is a valid lead — naming the quiet beats manufacturing drama.
+4. **Prompt: v2.7 sign-flip precision rule.** When estimate ≥ 0 and actual < 0 (or vice versa) or `|surprise_pct| > 200`, do not cite the percentage. Quote absolute EPS.
+5. **Prompt: bearish-hyperbole forbidden words.** Added "catastrophic," "catastrophe," "collapse(d/ing)," "breakdown," "disaster(ous)," "carnage," "bloodbath," "implosion/implodes/imploded," "death spiral," "annihilated," "decimated" to the forbidden list — mirrored across all four prompts (morning, recap, premarket, weekend).
+
+**Why this matters.** v2.6 was an anti-drift release (Drive ↔ prod sync). v2.7 is an anti-stale-lead release (don't elevate history into the lead even when fresh ambient signal makes it plausible). The two together: production code is current AND it can't dress up history as today's news.
 
 ## Recent Changes (2026-05-19 — v2.6 anti-drift hardening)
 
