@@ -2,10 +2,18 @@
 """
 Morning Briefing System
 Generates a daily digest of material news and earnings for stock holdings.
-Sends via iMessage at 5:30 AM PT on weekdays.
+Email-only delivery via Apple Mail; iMessage path was removed in v2.6 (2026-05-19)
+and is blocked at import time by `_v2_6_guard()` below.
+
+Five workflow modes dispatched from main():
+    morning           — 5:00 AM PT Mon–Fri, full AI editorial brief
+    premarket         — 6:20 AM PT Mon–Fri, AI delta brief + bell plan
+    recap             — 1:15 PM PT Mon–Fri, post-close editorial
+    lunarcrush        — 5:30 PM PT Sunday, social/sentiment prep-for-the-week
+    weekend_preview   — 6:00 PM PT Sunday, weekly setup
 
 Usage:
-    python3 morning_briefing.py
+    python3 morning_briefing.py [mode]   # mode defaults to "morning"
 
 Requirements:
     pip3 install requests feedparser anthropic
@@ -35,6 +43,7 @@ from morning_briefing_redesign import (
     format_recap_text,
     generate_ai_premarket_brief,
     format_premarket_html,
+    format_premarket_text,
     generate_ai_weekend_brief,
     format_weekend_html,
     format_weekend_text,
@@ -2903,7 +2912,7 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
             lines.append("")
 
     # Analyst upgrades/downgrades/price target changes
-    # iMessage: only show material actions (rating changes or PT moves >5%)
+    # Only show material actions (rating changes or PT moves >10% or new coverage)
     if analyst_actions:
         material = []
         for symbol in sorted(analyst_actions.keys()):
@@ -2921,7 +2930,7 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
         if material:
             lines.append("▸ ANALYST ACTIONS (7d)")
             lines.append("")
-            for symbol, a in material[:15]:  # Cap at 15 for iMessage
+            for symbol, a in material[:15]:  # Cap at 15 to keep the section scannable
                 analyst = a.get("analyst", "?")
                 action = a.get("action", "")
                 pt = a.get("price_target")
@@ -3991,40 +4000,66 @@ def run_premarket_update():
         "holdings_count": len(all_tickers),
     }
 
-    # Generate AI editorial brief
+    # Generate AI editorial brief.
+    # v2.7.4 (2026-05-23): the previous version wrapped AI gen + HTML format + text
+    # format in a single try/except.  A NameError or other failure in the text-format
+    # step (e.g. a missing import) would erroneously print "AI brief failed",
+    # clobber the already-built html_email to None, and discard the AI work — the
+    # premarket would silently degrade to the legacy text formatter.  Narrow scope:
+    # only AI generation failures should trigger the legacy fallback.  Downstream
+    # formatting errors must not throw away a working AI brief.
     print("\n[5/5] Generating AI pre-market brief...")
+    ai_brief = None
+    html_email = None
+    text_message = None
     try:
         ai_brief = generate_ai_premarket_brief(briefing_data, CONFIG["ANTHROPIC_API_KEY"])
         print("  ✓ AI brief generated")
-
-        html_email = format_premarket_html(ai_brief, briefing_data)
-        print(f"  ✓ HTML email: {len(html_email):,} bytes")
-
-        text_message = format_premarket_text(ai_brief, briefing_data)
-        print(f"  ✓ Plain text: {len(text_message):,} chars")
     except Exception as e:
         print(f"  ✗ AI brief failed: {e}")
         print("  Falling back to legacy formatter...")
-        vk_highlights = []
         text_message = format_premarket_update(
             market_snapshot, premarket_movers, finnhub_upcoming,
-            vk_highlights, len(all_tickers)
+            [],  # vk_highlights — legacy fallback does not use VK
+            len(all_tickers)
         )
-        html_email = None
 
-    # Console output
+    if ai_brief is not None:
+        # Format HTML; on failure, surface clearly and keep ai_brief for the text path.
+        try:
+            html_email = format_premarket_html(ai_brief, briefing_data)
+            print(f"  ✓ HTML email: {len(html_email):,} bytes")
+        except Exception as e:
+            print(f"  ✗ HTML formatting failed (keeping AI brief for text path): {e}")
+            html_email = None
+
+        # Format plain text; on failure, log and continue — we still have HTML.
+        try:
+            text_message = format_premarket_text(ai_brief, briefing_data)
+            print(f"  ✓ Plain text: {len(text_message):,} chars")
+        except Exception as e:
+            print(f"  ✗ Plain-text formatting failed (HTML email will still send): {e}")
+            text_message = None
+
+    # Console output (HTML is too large to dump; show text if we have it)
     print("\n" + "=" * 50)
-    print(text_message)
+    if text_message:
+        print(text_message)
+    elif html_email:
+        print(f"HTML brief built ({len(html_email):,} bytes) — see Mail for rendered output.")
     print("=" * 50)
 
-    # Send HTML email
+    # Send HTML email (preferred); fall back to text, fail loudly if we have neither.
     print(f"Sending email to {CONFIG['EMAIL_RECIPIENT']}...")
     today = datetime.now().strftime("%B %d, %Y")
     email_subject = f"Pre-Market Update – {today}"
     if html_email:
         email_success = send_html_email(CONFIG["EMAIL_RECIPIENT"], email_subject, html_email)
-    else:
+    elif text_message:
         email_success = send_email(CONFIG["EMAIL_RECIPIENT"], email_subject, text_message)
+    else:
+        print("✗ No email body available (AI + HTML + text all failed). Skipping send.")
+        email_success = False
 
     if email_success:
         print("\n✓ Pre-market update delivered via Email!")

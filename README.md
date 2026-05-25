@@ -1,6 +1,16 @@
 # Morning Briefing
 
-Automated stock-market intelligence brief for a concentrated investment portfolio. Monitors 84 holdings (70 stocks + 14 ETFs) and delivers AI-generated editorial analysis via HTML email on a weekday + weekend-aware schedule. Email-only as of 2026-05-18.
+Automated stock-market intelligence brief for a concentrated investment portfolio. Monitors 84 holdings (70 stocks + 14 ETFs) and delivers AI-generated editorial analysis via HTML email on a weekday + Sunday-evening schedule. Email-only as of 2026-05-18.
+
+**Macro frame.** This system exists to help Jeff stay reasonably abreast of major developments in his personal and firm portfolios with two goals: (1) keep him fully informed; (2) preemptively flag signal from noise. Features that create noise are regressions even if they "work."
+
+## v2.7.2 — LunarCrush → Sunday Evening + Monitor False-Positive Fix (2026-05-23)
+
+- **LunarCrush moved from weekday 6:20 AM to Sunday 5:30 PM PT** — matches the original prep-for-the-week intent. Pairs with `weekend_preview` at 6:00 PM so the Sunday evening review lands as a complete two-part package.
+- **Monitor mode-per-time dispatch** — `briefing_monitor.py` now exposes `_modes_for_current_time()` and a `--by-time` CLI flag. The watchdog plist passes `--by-time`, so each scheduled run validates only the workflow that just fired. Closes a daily false-positive at 1:25 PM where the recap check was flagging morning as "stale" (8h+ old vs 3h max).
+- **BRKB / Yahoo "possibly delisted" pattern added to `KNOWN_NOISE_PATTERNS`** — Berkshire B is not delisted; Yahoo's quote endpoint flakes on it intermittently and that wording wasn't previously suppressed.
+- **Sunday monitor slot added** — `com.briefing.monitor.plist` now also fires at 6:00 PM Sunday so the LunarCrush brief is actually checked.
+- **CLAUDE.md inventory corrected** — was claiming six LaunchAgents while seven were loaded; LunarCrush wasn't even listed.
 
 ## v2.7 — Stale-Lead + Bearish-Hyperbole Fix (2026-05-22)
 
@@ -49,7 +59,7 @@ Redesigned from plain-text data dump to AI-powered editorial brief. Claude Sonne
 - **AI-filtered news** — relevant headlines selected and interpreted by Claude API
 - **Strategy reads (recap + weekend_preview)** — long-form analyst posts (Stratechery, Asianometry) from the last 48h surfaced in a "Strategy & Analysis" section, with GUID-deduped state shared across recap and weekend_preview so each post appears once
 - **HTML email** — professional typography with data appendix tables (plain-text fallback when HTML rendering fails)
-- **Social intelligence** — *the morning brief no longer calls LunarCrush as of 2026-04-26.* Daily LunarCrush coverage lives in the sibling [`lunarcrush-brief`](https://github.com/jvs-wq/lunarcrush-brief) repo (evening 5 PM PT, Saturday weekly digest, Monday review).
+- **Social intelligence (LunarCrush)** — runs from THIS repo as a standalone Sunday-evening brief (`com.briefing.lunarcrush.plist`, 5:30 PM PT Sunday, as of v2.7.2 2026-05-23). The main morning brief no longer inline-calls LunarCrush as of 2026-04-26 — the social signal was promoted to its own scheduled workflow to avoid burying it inside the morning brief. Saturday weekly digest and Monday review (if used) live in the sibling [`lunarcrush-brief`](https://github.com/jvs-wq/lunarcrush-brief) repo.
 
 ## Architecture
 
@@ -73,10 +83,11 @@ strategy_reads_seen.json     — Stratechery + Asianometry GUID dedup state (git
 |------|----------|---------|
 | `morning` | **Mon–Fri** 5:00 AM PT | Full AI editorial brief (news, earnings, movers, analyst actions) |
 | `premarket` | **Mon–Fri** 6:20 AM PT | AI delta brief — what changed since 5 AM, BMO actuals, bell plan |
-| `recap` | **Mon–Fri** 2:00 PM PT | Post-close editorial — grades the day, frames tomorrow, includes Stratechery + Asianometry strategy reads |
+| `recap` | **Mon–Fri** 1:15 PM PT | Post-close editorial — grades the day, frames tomorrow, includes Stratechery + Asianometry strategy reads |
+| `lunarcrush` | **Sun** 5:30 PM PT | Social/sentiment prep-for-the-week — holdings social pulse + creator signals (moved from weekday 6:20 AM in v2.7.2) |
 | `weekend_preview` | **Sun** 6:00 PM PT | Sunday futures + AI-filtered weekend headlines + strategy reads + AI synthesis ("setup for Monday") |
 
-The four briefing modes are weekday- vs Sunday-gated at the launchd layer (see `launchd/`). Saturday is reserved for the LunarCrush weekly digest, which lives in the sibling [`lunarcrush-brief`](https://github.com/jvs-wq/lunarcrush-brief) repo.
+The five briefing modes are weekday- vs Sunday-gated at the launchd layer (see `*.plist` files). Saturday has no scheduled briefs in this repo; an optional Saturday LunarCrush weekly digest can run from the sibling [`lunarcrush-brief`](https://github.com/jvs-wq/lunarcrush-brief) repo if used.
 
 ## Setup
 
@@ -103,13 +114,16 @@ The five plists in `launchd/` are the source of truth for the schedule. Install 
 bash launchd/install.sh
 ```
 
-The script copies every `*.plist` in `launchd/` to `~/Library/LaunchAgents/` and `launchctl load`s them. It's idempotent — safe to re-run. You should see six agents loaded: `com.briefing.deploy`, `com.briefing.morning`, `com.briefing.premarket`, `com.briefing.recap`, `com.briefing.weekend_preview`, `com.briefing.monitor`.
+The script copies every `*.plist` in `launchd/` to `~/Library/LaunchAgents/` and `launchctl load`s them. It's idempotent — safe to re-run. You should see **seven** agents loaded: `com.briefing.deploy`, `com.briefing.morning`, `com.briefing.premarket`, `com.briefing.recap`, `com.briefing.lunarcrush`, `com.briefing.weekend_preview`, `com.briefing.monitor`.
 
 Schedule details:
 - `deploy` fires at 4:50 AM Mon–Fri — runs `scripts/deploy.sh --reload` so Drive edits land in production before the 5:00 AM morning brief and the LaunchAgents are reloaded with the fresh code.
 - `morning` / `premarket` / `recap` use an array of five `StartCalendarInterval` dicts (Weekday 1–5) so they only fire on weekdays.
+- `lunarcrush` uses a single dict with `Weekday=0` (Sunday) at 5:30 PM PT (was weekday 6:20 AM before v2.7.2).
 - `weekend_preview` uses a single dict with `Weekday=0` (Sunday) at 6:00 PM PT.
-- `monitor` runs at 5:10 AM / 6:30 AM / 1:25 PM Mon–Fri and includes a deploy-drift check (email alert if production SHAs diverge from Drive).
+- `monitor` runs at 5:10 AM / 6:30 AM / 1:25 PM Mon–Fri PLUS 6:00 PM Sunday. Calls `briefing_monitor.py --by-time` which dispatches to the workflow that just ran. Also includes a deploy-drift check (email alert if production SHAs diverge from Drive).
+
+**Structural gap:** only three of seven plists are currently mirrored to Drive (`com.briefing.deploy.plist`, `com.briefing.monitor.plist`, `com.briefing.lunarcrush.plist`). The morning/premarket/recap/weekend_preview plists live only in production `~/Library/LaunchAgents/` and aren't reachable to `deploy.sh`. If you ever need to change their schedule, you must edit them in place on the iMac.
 
 ## Disaster Recovery
 

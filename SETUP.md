@@ -2,8 +2,24 @@
 
 **Purpose:** Everything needed to rebuild the Morning Briefing system from scratch on a clean Mac. If this file plus the other files in this Drive folder exist, a new Claude session (or a human) can fully reconstruct the running system.
 
-**Last Updated:** May 22, 2026 (v2.7 stale-lead + bearish-hyperbole fix — see PROJECT_STATE.md changelog)
+**Last Updated:** May 23, 2026 (v2.7.2 LunarCrush → Sunday evening + monitor false-positive fix — see PROJECT_STATE.md changelog)
 **Owner:** Jeff Vessler | jvs@blumecapital.com | Blume Capital
+
+## v2.7.4 Quick Reference (2026-05-23)
+
+1. **All 7 plists now live in `launchd/`** as the canonical source. `deploy.sh` mirrors them into `~/Library/LaunchAgents/` at the 4:50 AM auto-sync so schedule edits made via Cowork in Drive propagate to whichever machine runs the briefing.
+2. **`requirements.txt`** created in Drive (was referenced by README but missing). Use it as the canonical dependency list across all three machines.
+3. **Premarket exception handling narrowed.** Formatting errors no longer get reported as "AI brief failed" and no longer discard a working `html_email`. Long-standing silent regression closed.
+4. **Software currency:** see `outputs/software_currency_audit_2026-05-23.md` for the Python 3.9 EOL recommendation and dependency-version notes.
+
+## v2.7.2 Quick Reference (2026-05-23)
+
+1. **LunarCrush moved to Sunday 5:30 PM PT** (was weekday 6:20 AM). Edit surface: `com.briefing.lunarcrush.plist` in this Drive folder. Reaches production via the 4:50 AM Monday `com.briefing.deploy` auto-sync.
+2. **Monitor mode-per-time dispatch.** `briefing_monitor.py` exposes `_modes_for_current_time()` and a `--by-time` CLI flag. `com.briefing.monitor.plist` now passes `--by-time` and includes a Sunday 6:00 PM slot. Each scheduled run only validates the workflow that just fired.
+3. **BRKB-style Yahoo "possibly delisted" pattern added to `KNOWN_NOISE_PATTERNS`** in `briefing_monitor.py`. Berkshire Class B is not delisted; Yahoo's quote endpoint flakes intermittently.
+4. **No iMessage path anywhere.** The `_v2_6_guard()` import-time check in `morning_briefing.py` refuses to run if any iMessage symbol reappears. `run_lunarcrush_brief()` (line 3437) uses `send_email`, not iMessage.
+
+
 
 ## v2.7 Quick Reference (2026-05-22)
 
@@ -104,162 +120,128 @@ Pull live values from `.env` or `api_keys.txt`. To rotate: log into the provider
 
 ## 4. LaunchAgent Plist Files
 
-**IMPORTANT: osascript wrapper pattern.** Plists must invoke `/usr/bin/osascript` (not `/usr/bin/python3` directly) because launchd-spawned python3 lacks macOS Automation (TCC) permission to control Mail.app. The osascript wrapper inherits the needed permissions. Without this, delivery fails with error -1743. The python3 script's stdout/stderr are redirected to log files inside the `do shell script` command. The plist-level StandardOutPath/StandardErrorPath capture osascript-level output only.
+**Source of truth:** the seven canonical plists live in `launchd/` inside this Drive folder. They are mirrored to `~/Library/LaunchAgents/` by `scripts/deploy.sh` at 4:50 AM weekdays (or whenever you run it manually with `--reload`). Edit them in Drive, not in `~/Library/LaunchAgents/` — anything done in the LaunchAgents folder directly will be overwritten on the next sync.
 
-### com.briefing.morning.plist (5:00 AM — full morning briefing)
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.briefing.morning</string>
+**osascript wrapper pattern.** All Python-invoking plists wrap their command in `/usr/bin/osascript -e 'do shell script "..."'` rather than calling `/usr/bin/python3` directly. Required because a launchd-spawned python3 lacks macOS Automation (TCC) permission to drive Mail.app — direct invocation fails with `error -1743`. The osascript wrapper inherits the needed permissions. Python stdout/stderr is redirected inside the `do shell script` string; the plist-level `StandardOutPath` / `StandardErrorPath` only capture osascript-level output. (The deploy plist is an exception — it invokes `/bin/bash scripts/deploy.sh` directly because deploy.sh doesn't touch Mail.app.)
 
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/bin/osascript</string>
-        <string>-e</string>
-        <string>do shell script "/usr/bin/python3 /Users/jeffreystclaire/Claude/morning-briefing/morning_briefing.py morning > /tmp/briefing-morning.log 2> /tmp/briefing-morning.err"</string>
-    </array>
+### Inventory and timing
 
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>5</integer>
-        <key>Minute</key>
-        <integer>0</integer>
-    </dict>
+| Plist | Schedule | Mode | Source |
+|---|---|---|---|
+| `com.briefing.deploy.plist` | Mon–Fri 4:50 AM PT | (runs `scripts/deploy.sh --reload`) | `launchd/com.briefing.deploy.plist` |
+| `com.briefing.morning.plist` | Mon–Fri 5:00 AM PT | `morning_briefing.py morning` | `launchd/com.briefing.morning.plist` |
+| `com.briefing.premarket.plist` | Mon–Fri 6:20 AM PT | `morning_briefing.py premarket` | `launchd/com.briefing.premarket.plist` |
+| `com.briefing.recap.plist` | Mon–Fri 1:15 PM PT | `morning_briefing.py recap` | `launchd/com.briefing.recap.plist` |
+| `com.briefing.lunarcrush.plist` | Sun 5:30 PM PT | `morning_briefing.py lunarcrush` | `launchd/com.briefing.lunarcrush.plist` |
+| `com.briefing.weekend_preview.plist` | Sun 6:00 PM PT | `morning_briefing.py weekend_preview` | `launchd/com.briefing.weekend_preview.plist` |
+| `com.briefing.monitor.plist` | Mon–Fri 5:10/6:30 AM + 1:25 PM + Sun 6:00 PM | `briefing_monitor.py --by-time` | `launchd/com.briefing.monitor.plist` |
 
-    <key>StandardOutPath</key>
-    <string>/tmp/briefing-morning-osa.log</string>
+### Editing a schedule
 
-    <key>StandardErrorPath</key>
-    <string>/tmp/briefing-morning-osa.err</string>
-
-    <key>RunAtLoad</key>
-    <false/>
-</dict>
-</plist>
-```
-
-### com.briefing.premarket.plist (6:20 AM — lightweight pre-market update)
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.briefing.premarket</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/bin/osascript</string>
-        <string>-e</string>
-        <string>do shell script "/usr/bin/python3 /Users/jeffreystclaire/Claude/morning-briefing/morning_briefing.py premarket > /tmp/briefing-premarket.log 2> /tmp/briefing-premarket.err"</string>
-    </array>
-
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>6</integer>
-        <key>Minute</key>
-        <integer>20</integer>
-    </dict>
-
-    <key>StandardOutPath</key>
-    <string>/tmp/briefing-premarket-osa.log</string>
-
-    <key>StandardErrorPath</key>
-    <string>/tmp/briefing-premarket-osa.err</string>
-
-    <key>RunAtLoad</key>
-    <false/>
-</dict>
-</plist>
-```
-
-### com.briefing.recap.plist (1:15 PM — afternoon market recap)
-```xml
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.briefing.recap</string>
-
-    <key>ProgramArguments</key>
-    <array>
-        <string>/usr/bin/osascript</string>
-        <string>-e</string>
-        <string>do shell script "/usr/bin/python3 /Users/jeffreystclaire/Claude/morning-briefing/morning_briefing.py recap > /tmp/briefing-recap.log 2> /tmp/briefing-recap.err"</string>
-    </array>
-
-    <key>StartCalendarInterval</key>
-    <dict>
-        <key>Hour</key>
-        <integer>13</integer>
-        <key>Minute</key>
-        <integer>15</integer>
-    </dict>
-
-    <key>StandardOutPath</key>
-    <string>/tmp/briefing-recap-osa.log</string>
-
-    <key>StandardErrorPath</key>
-    <string>/tmp/briefing-recap-osa.err</string>
-
-    <key>RunAtLoad</key>
-    <false/>
-</dict>
-</plist>
-```
+1. Open the relevant plist in `launchd/` via Cowork or your editor of choice (on any of your three machines — they sync via Drive).
+2. Edit the `StartCalendarInterval` block. Weekday values: `0` or `7` = Sunday, `1` = Monday, …, `5` = Friday, `6` = Saturday.
+3. If you change the time of a workflow, also update the dispatch window in `briefing_monitor.py._modes_for_current_time()` and the schedule table in `CLAUDE.md` — they must stay aligned or the monitor produces false positives.
+4. Wait for the next 4:50 AM auto-sync, or run `~/Claude/morning-briefing/scripts/deploy.sh --reload` from Terminal for immediate effect.
 
 ---
 
-## 5. Deploy From Scratch Checklist
+## 5. Deploy From Scratch Checklist (cold rebuild on a fresh Mac)
 
-### Step 1: Install Python Dependencies
+This walks through the full rebuild path. Assumes you have the Drive folder synced and the GitHub repo accessible on the target Mac.
+
+### Step 1: Install Python and dependencies
 ```bash
-pip3 install --user requests feedparser anthropic google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client yfinance
+# Use the new requirements.txt (created v2.7.4); was previously a list embedded in this doc.
+cd ~/Claude/morning-briefing  # placeholder — you'll create this folder in Step 2
+# After Step 2 you can run:
+pip3 install --user --break-system-packages -r requirements.txt
+```
+Or, if you're following the v2.7.4 software-currency recommendation and installing Python 3.12 from Homebrew:
+```bash
+brew install python@3.12
+/opt/homebrew/bin/python3.12 -m venv ~/Claude/morning-briefing/.venv
+~/Claude/morning-briefing/.venv/bin/pip install -r ~/Claude/morning-briefing/requirements.txt
+# If you take this path, update the plists in launchd/ to point at .venv/bin/python3 instead of /usr/bin/python3.
 ```
 
-### Step 2: Place the Script
+### Step 2: Clone the repo into production location
 ```bash
-mkdir -p ~/Claude/morning-briefing
-# Copy morning_briefing.py from this Google Drive folder to:
-cp morning_briefing.py ~/Claude/morning-briefing/morning_briefing.py
+mkdir -p ~/Claude
+cd ~/Claude
+git clone git@github.com:jvs-wq/morning-briefing.git
+# OR if SSH isn't set up:
+# git clone https://github.com/jvs-wq/morning-briefing.git
 ```
 
-### Step 3: Verify API Keys
-Open `~/Claude/morning-briefing/morning_briefing.py` and confirm the CONFIG dict at the top has valid keys. Test with:
+### Step 3: Restore secrets
+The `.env` file is gitignored. Copy from a backup or recreate manually:
 ```bash
-python3 ~/Claude/morning-briefing/morning_briefing.py morning
-```
-Watch the output for API errors. If a key is expired, log into the relevant provider portal (see Section 3) and generate a new one.
-
-### Step 4: Set Up Gmail API (for Vital Knowledge)
-```bash
-# Ensure the OAuth client_secret JSON is at the path in CONFIG["GMAIL_CREDENTIALS_FILE"]
-python3 ~/Claude/morning-briefing/morning_briefing.py setup_gmail
-# This opens a browser window — authorize with the Gmail account that receives Vital Knowledge forwards
-# On success, gmail_token.json is created at CONFIG["GMAIL_TOKEN_FILE"]
-```
-
-### Step 5: Install LaunchAgent Plists
-Copy all three plist files from Section 4 above into `~/Library/LaunchAgents/`:
-```bash
-# Copy the three plist files (from this Drive folder or paste from Section 4)
-cp com.briefing.morning.plist ~/Library/LaunchAgents/
-cp com.briefing.premarket.plist ~/Library/LaunchAgents/
-cp com.briefing.recap.plist ~/Library/LaunchAgents/
+# At minimum, the .env needs:
+#   ANTHROPIC_API_KEY
+#   FINNHUB_API_KEY
+#   FMP_API_KEY
+#   ALPHA_VANTAGE_API_KEY
+#   LUNARCRUSH_API_KEY
+#   EMAIL_RECIPIENT (your jvs@blumecapital.com address)
+#   STRATECHERY_RSS_URL (optional)
+#   ASIANOMETRY_RSS_URL (optional)
+cp /path/to/backup/.env ~/Claude/morning-briefing/.env
 ```
 
-### Step 6: Load LaunchAgents
+### Step 4: Smoke-test each workflow before scheduling
 ```bash
-launchctl load ~/Library/LaunchAgents/com.briefing.morning.plist
-launchctl load ~/Library/LaunchAgents/com.briefing.premarket.plist
-launchctl load ~/Library/LaunchAgents/com.briefing.recap.plist
+cd ~/Claude/morning-briefing
+python3 morning_briefing.py morning           # full morning brief
+python3 morning_briefing.py premarket         # 6:20 AM delta
+python3 morning_briefing.py recap             # 1:15 PM post-close
+python3 morning_briefing.py lunarcrush        # Sunday social brief
+python3 morning_briefing.py weekend_preview   # Sunday weekly setup
 ```
+First run prompts for Mail.app Automation permission — accept it. Subsequent runs are silent.
+
+### Step 5: Install the LaunchAgents
+The canonical install is one `scripts/deploy.sh --reload` invocation — it mirrors `launchd/*.plist` from Drive into `~/Library/LaunchAgents/` and `launchctl load`s them. Idempotent.
+```bash
+cd ~/Claude/morning-briefing
+scripts/deploy.sh --reload
+```
+Verify:
+```bash
+launchctl list | grep briefing
+# Should show 7 lines:
+#   com.briefing.deploy
+#   com.briefing.morning
+#   com.briefing.premarket
+#   com.briefing.recap
+#   com.briefing.lunarcrush
+#   com.briefing.weekend_preview
+#   com.briefing.monitor
+```
+
+### Step 6: (Optional) Set up the Vital Knowledge Gmail OAuth
+Only needed if you want the VK news section in the morning brief.
+```bash
+python3 ~/Claude/morning-briefing/morning_briefing.py --setup-gmail
+# Opens a browser; authorize with the Gmail account that receives the VK forward.
+```
+
+### Step 7: (Optional) Restore runtime state from backup
+- `earnings_history.json` (4-week earnings lookback) — gitignored, rebuilds over ~3 weeks if missing.
+- `strategy_reads_seen.json` (article-GUID dedup) — gitignored, rebuilds itself.
+
+---
+
+## 6. Multi-machine sync (Jeff's three Macs)
+
+Google Drive is the bridge. Every machine should have:
+
+- The Drive folder synced locally (this folder you're reading).
+- A production checkout at `~/Claude/morning-briefing/` (clone of `github.com:jvs-wq/morning-briefing`).
+- `scripts/deploy.sh` runs nightly via `com.briefing.deploy.plist` to mirror Drive → production → GitHub, AND mirror Drive's `launchd/*.plist` → `~/Library/LaunchAgents/`.
+
+**Which machine actually runs the briefs?** Only the iMac currently. The MacBook and third Mac sync the code via Drive + Git so any of them can be the active machine if needed, but only the active machine should have the LaunchAgents loaded. Don't load them on multiple Macs — you'd get duplicate emails.
+
+**Editing schedules from a non-active machine:** edit the plist in Drive → wait for the iMac's 4:50 AM auto-sync → reloaded automatically. Or SSH to the iMac and run `~/Claude/morning-briefing/scripts/deploy.sh --reload` for immediate effect.
 
 ### Step 7: Verify
 ```bash

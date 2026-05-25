@@ -6,10 +6,12 @@ if any failures are detected. Designed to be called by a launchd plist
 ~5 minutes after each briefing workflow.
 
 Usage:
-    python3 briefing_monitor.py morning    # Check morning briefing logs
-    python3 briefing_monitor.py premarket  # Check premarket logs
-    python3 briefing_monitor.py recap      # Check recap logs
-    python3 briefing_monitor.py all        # Check all three
+    python3 briefing_monitor.py morning              # Check morning briefing logs
+    python3 briefing_monitor.py premarket lunarcrush # Check multiple workflows
+    python3 briefing_monitor.py recap                # Check recap logs
+    python3 briefing_monitor.py all                  # Check all four workflows
+    python3 briefing_monitor.py --by-time            # Pick modes from current hour
+                                                     # (used by the launchd plist)
 
 Exit codes:
     0 = healthy
@@ -55,6 +57,7 @@ KNOWN_NOISE_PATTERNS = [
     "No earnings dates found, symbol may be delisted",
     "No fundamentals data found for symbol:",       # quoteSummary on ETFs/ADRs
     "Quote not found for symbol:",                  # Yahoo v10 dead — routine for BRKB/VWAPY
+    "possibly delisted; no price data found",       # transient Yahoo flake on BRKB et al. — not a real delisting
     "NotOpenSSLWarning: urllib3 v2 only supports",
     "FutureWarning: You are using",                 # google-auth py3.9 warnings
     "FutureWarning: You are using a non-supported Python",
@@ -329,13 +332,55 @@ def log_result(results: list[dict]):
         pass
 
 
-def main():
-    mode = sys.argv[1] if len(sys.argv) > 1 else "all"
+def _modes_for_current_time() -> list[str]:
+    """Return the workflow modes the monitor should check right now.
 
-    if mode == "all":
+    The launchd watchdog fires at:
+      - 5:10 AM Mon–Fri  (validates morning, which ran at 5:00 AM)
+      - 6:30 AM Mon–Fri  (validates premarket, which ran at 6:20 AM)
+      - 1:25 PM Mon–Fri  (validates recap, which ran at 1:15 PM)
+      - 6:00 PM Sunday   (validates LunarCrush 5:30 PM + weekend_preview 6:00 PM)
+
+    Each slot should validate only the workflow that just ran — otherwise the
+    1:25 PM weekday run reports "morning stale" because the morning log is
+    8h+ old by then (its max age is 3h). Window boundaries are deliberately
+    generous so a slightly-late launchd wake still picks the intended slot.
+
+    Day-of-week awareness matters because LunarCrush moved from a weekday
+    morning slot to Sunday evening as of v2.7.2 (2026-05-23): a 6 AM weekday
+    check should no longer expect LunarCrush, and a Sunday evening check
+    should not expect the weekday workflows.
+    """
+    now = datetime.now()
+    h = now.hour
+    is_sunday = now.weekday() == 6  # Python: Monday=0, Sunday=6
+
+    if is_sunday and 17 <= h < 20:
+        return ["lunarcrush"]
+    if not is_sunday and 5 <= h < 6:
+        return ["morning"]
+    if not is_sunday and 6 <= h < 8:
+        return ["premarket"]
+    if not is_sunday and 13 <= h < 15:
+        return ["recap"]
+    # Off-schedule manual run: fall back to checking everything.
+    return ["morning", "premarket", "lunarcrush", "recap"]
+
+
+def main():
+    # CLI accepts:
+    #   (no args)                           → check all four workflows
+    #   "all"                               → check all four workflows
+    #   "--by-time"                         → pick modes from current hour
+    #                                         (used by the monitor plist)
+    #   one or more workflow names          → check only those workflows
+    args = sys.argv[1:]
+    if not args or args == ["all"]:
         modes = ["morning", "premarket", "lunarcrush", "recap"]
+    elif args == ["--by-time"]:
+        modes = _modes_for_current_time()
     else:
-        modes = [mode]
+        modes = args
 
     results = [analyze_logs(m) for m in modes]
 

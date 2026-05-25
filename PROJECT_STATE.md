@@ -1,13 +1,15 @@
 # Morning Briefing — Project State
 
-**Last updated:** 2026-05-22
-**Status:** Production — v2.7 stale-lead + bearish-hyperbole fix deployed
+**Last updated:** 2026-05-23
+**Status:** Production — v2.7.4 plist consolidation + multi-machine Drive bridge unblocked (Drive-side; reaches prod via Monday 4:50 AM auto-sync, or `scripts/deploy.sh --reload` for immediate effect)
 
 ---
 
 ## Current State
 
-The morning briefing system runs on Jeff's iMac (`Jeffs-iMac`) via launchd. Six LaunchAgents — `deploy` (4:50 AM weekdays), `morning` (5:00 AM weekdays), `premarket` (6:20 AM weekdays), `recap` (1:15 PM weekdays), `weekend_preview` (Sunday 6:00 PM), `monitor` (5:10 AM, 6:30 AM, 1:25 PM weekdays). Email-only delivery via Apple Mail. The production tree (`~/Claude/morning-briefing/`) is the git working tree for `github.com/jvs-wq/morning-briefing` `main` branch; the Drive folder is a synced mirror reconciled by `scripts/deploy.sh` at 4:50 AM each weekday.
+The morning briefing system runs on Jeff's iMac (`Jeffs-iMac`) via launchd. **Seven LaunchAgents** — `deploy` (4:50 AM weekdays), `morning` (5:00 AM weekdays), `premarket` (6:20 AM weekdays), `recap` (1:15 PM weekdays), `lunarcrush` (5:30 PM Sunday — moved from weekday morning in v2.7.2), `weekend_preview` (Sunday 6:00 PM), `monitor` (5:10 AM, 6:30 AM, 1:25 PM weekdays + 6:00 PM Sunday). Email-only delivery via Apple Mail. The production tree (`~/Claude/morning-briefing/`) is the git working tree for `github.com/jvs-wq/morning-briefing` `main` branch; the Drive folder is a synced mirror reconciled by `scripts/deploy.sh` at 4:50 AM each weekday.
+
+**Macro frame.** Everything in this system serves two goals: (1) keep Jeff fully informed about his and his firm's portfolios; (2) preemptively flag signal from noise. Features that create noise — false-positive monitor alerts, stale-earnings led briefs, hype words — are regressions even if they "work."
 
 ### What's Working (2026-05-19)
 - Full data collection pipeline: market snapshot, pre-market movers, earnings scorecard with revenue, AI-filtered news, analyst actions, RSI alerts.
@@ -19,10 +21,94 @@ The morning briefing system runs on Jeff's iMac (`Jeffs-iMac`) via launchd. Six 
 - AI freshness rule: `BRIEFING_SYSTEM_PROMPT` carries an explicit "days_since" rule; payload enrichment adds `days_since` to each scorecard/earnings record before the AI sees them.
 
 ### Known Gaps (Deferred)
-- **Vital Knowledge feed:** Gmail OAuth still not authorized — VK highlights section empty. `python morning_briefing.py --setup-gmail` when ready.
+- **Vital Knowledge feed:** Gmail OAuth still not authorized — VK highlights section empty. `python morning_briefing.py --setup-gmail` when ready (requires Jeff at the keyboard for browser OAuth).
 - **Market snapshot incomplete:** VIX / oil / gold / BTC / DXY still N/A — need data-fetch expansion.
-- **Python 3.9 EOL:** iMac on 3.9.6, deprecation warnings from `google-auth` / `google-api-core`. Upgrade deferred.
-- **`~/My Drive/` is not actually synced.** The user's "My Drive" at `~/My Drive/` is a local directory, not a Google Drive mount. The real Google Drive sync points at `~/Library/CloudStorage/GoogleDrive-jeffstclaire@gmail.com/My Drive/` and has a stale May-12 copy. As far as the briefing system goes, this is fine — `deploy.sh` uses `~/My Drive/` (where Cowork edits land) as the source. But for the user's 3-machine sync goal, the other two machines aren't actually getting the latest. Flagged for separate follow-up.
+- **Python 3.9 EOL upgrade pending:** iMac on 3.9.6 (EOL Oct 2025). Recommended target 3.11+ via Homebrew. Plan documented in `outputs/software_currency_audit_2026-05-23.md` — non-urgent, maintenance window.
+- **Drive sync surface verified informally only.** Earlier PROJECT_STATE note said `~/My Drive/` on the iMac was local-only (with the real sync at `~/Library/CloudStorage/GoogleDrive-jeffstclaire@gmail.com/My Drive/`). Jeff confirmed 2026-05-23 that Drive IS the bridge across his three machines, so the multi-machine flow now relies on this being true. If a future change made on the MacBook doesn't appear on the iMac after a sync cycle, this assumption needs revisiting.
+
+### Resolved in v2.7.4 (no longer deferred)
+- **~~Only 3 of 7 plists in Drive~~** — All 7 now in `launchd/`. `deploy.sh` mirrors them to `~/Library/LaunchAgents/` as part of the auto-sync.
+- **~~Schedule changes from a non-iMac machine~~** — Now possible: edit plist in Drive (any machine) → propagates via Drive → next 4:50 AM sync picks it up.
+- **~~No requirements.txt in Drive~~** — Created.
+
+## Recent Changes (2026-05-23 — v2.7.4 plist consolidation + Drive-bridge unblock + software currency)
+
+**Trigger.** Jeff confirmed Google Drive is the bridge across his three Macs and asked me to fix all the open items I'd flagged plus a new standing rule: keep software up to date proactively. The biggest structural item: only 3 of 7 plists lived in Drive, so editing schedules from any non-iMac machine was effectively impossible.
+
+**Changes.**
+
+1. **All 7 plists consolidated into `launchd/` in Drive.** Previously: `launchd/com.briefing.deploy.plist` (already there), `com.briefing.monitor.plist` + `com.briefing.lunarcrush.plist` at root, and `com.briefing.morning/premarket/recap/weekend_preview` only on the iMac in `~/Library/LaunchAgents/`. Now: all seven in `launchd/` as the single canonical location. The four missing plists were written fresh using the canonical osascript-wrapper pattern (matching the existing lunarcrush plist's style). The two root-level duplicates were moved into `launchd/` and the root copies deleted.
+
+2. **`scripts/deploy.sh` extended to mirror plists.** New step 4b after the v2.6 guard: `cp launchd/*.plist ~/Library/LaunchAgents/`, with SHA drift detection and the same dry-run support as the Python sync. Reload loop now covers all 6 non-deploy agents (`morning premarket recap lunarcrush weekend_preview monitor`); the deploy plist itself is deliberately NOT reloaded by deploy.sh to avoid the script killing its own scheduler mid-run.
+
+3. **Premarket exception handling narrowed.** The previous `try/except Exception` block wrapped AI generation + HTML formatting + text formatting together. A NameError in text formatting (the v2.7.3 bug) was reported as "AI brief failed", clobbered the AI-generated `html_email` to None, and silently degraded the premarket to legacy text-only. New structure: AI gen is its own try-block (legacy fallback only fires on AI failure); HTML formatting and text formatting are their own try-blocks (each preserves whatever upstream succeeded). Plus an explicit guard at the send step: if all three paths failed, log loudly and skip the send rather than passing `None` to the email client.
+
+4. **`requirements.txt` created in Drive.** Was referenced by README but never existed in Drive (presumably lived only on the iMac, if at all). Pinned with lower bounds, not exact versions, so a `pip install -U -r requirements.txt` can safely bump patch and minor versions on routine refresh.
+
+5. **Software currency audit** in `outputs/software_currency_audit_2026-05-23.md`. Headline: production iMac is on Python 3.9.6 (EOL since Oct 2025). Recommended target 3.11+ via Homebrew, in a maintenance window. yfinance has a major version available (0.2.x → 1.x) that needs deliberate review before bumping. Anthropic SDK is also worth bumping for Claude 4.x model strings.
+
+6. **Docs updated comprehensively.** CLAUDE.md (agent inventory now reflects `launchd/` location and `requirements.txt`), SETUP.md (Sections 4–6 rewritten — the v2.5-era three-plist XMLs replaced with a single inventory table, a proper fresh-Mac install checklist using `scripts/deploy.sh --reload`, and a new Section 6 explaining multi-machine sync), README.md (existing).
+
+**Why this matters (macro overlay).** The structural gap I'd been flagging for two sessions — plists only on the iMac — was actively blocking Jeff's three-machine workflow. He confirmed Drive is the bridge, which made this a goal (1) "keep informed" issue: he was relying on a multi-machine sync that wasn't actually multi-machine for schedule changes. Now it is. The premarket exception narrowing is a goal (2) "signal from noise" cleanup: a misleading "AI brief failed" error was masking a missing import, which is exactly the noise that erodes alert trust over time.
+
+**Deferred (not blocking).** Vital Knowledge Gmail OAuth still not authorized (requires Jeff at the keyboard to authorize). Market snapshot N/A values (VIX/oil/gold/BTC/DXY) need a data-fetch expansion. Python 3.9 → 3.12 upgrade per the currency audit — scheduled for a maintenance window, not Monday morning.
+
+**Deployment (important).** This is the first time `deploy.sh` will sync plists. To bring production into lockstep:
+```bash
+~/Claude/morning-briefing/scripts/deploy.sh --reload
+```
+That single command will: SHA-diff Python files, copy them if needed, run the v2.6 guard, mirror Drive `launchd/*.plist` → `~/Library/LaunchAgents/`, git commit + push, and reload all 6 non-deploy LaunchAgents. After it completes, all 7 plists in `~/Library/LaunchAgents/` will exactly match the ones in Drive — the single-source-of-truth state.
+
+## Recent Changes (2026-05-23 — v2.7.3 dead-code cleanup + premarket import bug)
+
+**Trigger.** v2.7.2 flagged `run_morning_briefing_v2()` in `morning_briefing_redesign.py` as deferred dead code with dangling `imessage_sent` NameError-bombs. Jeff asked for it cleaned up. While doing the cleanup I discovered a related live bug: `format_premarket_text` was called at `morning_briefing.py:4011` but never imported, so every weekday morning the premarket workflow has been silently NameError-ing into the legacy fallback path — clobbering the AI-generated HTML email and delivering a legacy text-only premarket instead. Goal (1) regression hiding in plain sight.
+
+**Changes.**
+1. **Deleted `run_morning_briefing_v2()`** (was `morning_briefing_redesign.py:1730-1809`) and its empty "5. MAIN ORCHESTRATION FUNCTION" section header. Zero callers — confirmed by grep before deletion.
+2. **Deleted `format_morning_text()`** (was `morning_briefing_redesign.py:1596-1642`) and its stale "3. PLAIN TEXT FORMATTING FOR iMESSAGE" section header. Only caller was inside `run_morning_briefing_v2`, so orphaned by the deletion above. README's claim that it served as a "plain-text email fallback when HTML rendering fails" was incorrect — the real fallback for the live morning path is `format_briefing` and it's triggered on AI generation failure (not HTML rendering failure).
+3. **Fixed premarket missing-import bug.** Added `format_premarket_text` to the `from morning_briefing_redesign import (...)` block at `morning_briefing.py:38`. After this, the premarket try-block at line 4004 no longer NameError-s, the `except` no longer fires erroneously, and `html_email` is no longer clobbered to None. Premarket now delivers the AI-editorial HTML brief as intended.
+4. **Updated stale docstrings.** `morning_briefing.py` top-of-file docstring no longer says "Sends via iMessage at 5:30 AM PT" — replaced with email-only language and a full five-mode dispatcher inventory. Inline comments at lines 2906 and 2924 ("iMessage: only show material actions" / "Cap at 15 for iMessage") rewritten to reflect their actual purpose. `format_premarket_text` and `format_weekend_text` docstrings no longer call themselves "iMessage teasers" — they're identified as plain-text email fallbacks.
+
+**Verification.** Both modules `py_compile` clean. Full module import passes — v2.6 guard does not fire. `format_morning_text` and `run_morning_briefing_v2` confirmed gone from both module namespaces. Live formatters (`format_premarket_text`, `format_weekend_text`, `format_recap_text`) still resolve. `format_premarket_text` confirmed present in `morning_briefing.py` namespace post-import — premarket NameError bug closed. Final iMessage residue check: `morning_briefing_redesign.py` and `briefing_monitor.py` now have **zero** iMessage references; `morning_briefing.py` retains only the v2.6 guard's own forbidden-symbol regex and a handful of intentional historical-context comments explaining why iMessage was removed.
+
+**Why this matters (macro overlay).** The premarket bug is the cleaner illustration of why dead-code cleanup is a goal (1) discipline, not cosmetics: a half-deleted feature (iMessage send removed, but the parameter/structure scaffolding left behind) created a latent NameError that silently degraded the premarket brief from "AI-editorial HTML" to "legacy text-only" for an unknown number of weeks. If `run_morning_briefing_v2` had been fully removed in v2.6, the wiring confusion that left `format_premarket_text` unimported would never have happened. Lesson: when a feature gets removed, remove the scaffolding too, not just the call sites.
+
+**Deployment.** Drive-side change. Reaches production via 4:50 AM Monday `com.briefing.deploy` auto-sync. For same-day effect: `~/Claude/morning-briefing/scripts/deploy.sh --reload` from Terminal. After this lands, expect Tuesday's premarket email to be the AI-editorial HTML brief (not the legacy text fallback) — that's the visible smoke test.
+
+## Recent Changes (2026-05-23 — v2.7.2 LunarCrush → Sunday evening)
+
+**Trigger.** Jeff flagged that LunarCrush had been firing weekday mornings (6:20 AM Mon–Fri) since launch, but the original intent was a Sunday-evening prep-for-the-week social/sentiment brief. The plist had drifted from intent; `CLAUDE.md` didn't mention LunarCrush at all (silently inflated the "six LaunchAgents" claim into seven without the doc catching up).
+
+**Changes.**
+1. **`com.briefing.lunarcrush.plist`** rewritten — single `StartCalendarInterval` at Sunday 5:30 PM PT (Weekday 0, Hour 17, Minute 30). Old five weekday-morning entries removed. Pairs with `weekend_preview` at 6:00 PM so the Sunday evening review lands as a complete two-part package: social/sentiment lens first, general weekly prep second.
+2. **`briefing_monitor.py` → `_modes_for_current_time()`** updated. LunarCrush removed from the weekday 6–8 AM check. New rule: Sunday 17–20 → `["lunarcrush"]`; weekday 6–8 → `["premarket"]` only. Day-of-week awareness via `datetime.now().weekday() == 6`.
+3. **`com.briefing.monitor.plist`** gained a Sunday 6:00 PM entry (Weekday 0, Hour 18, Minute 0) so the watchdog actually fires on Sunday evening to validate the LunarCrush brief delivered.
+4. **`CLAUDE.md`** rewritten — corrected agent count (six → seven), added LunarCrush to the schedule table, added an explicit "macro frame" paragraph at the top, added v2.7.1/v2.7.2 to the safety rails, and flagged the structural gap that only 3 of 7 plists live in Drive.
+5. **Sample outputs** generated in `outputs/`: `lunarcrush_sample_sunday_evening.html` shows what the new Sunday LC email will look like; `monitor_before_after_sample.html` shows the false-positive that landed Friday vs the silence that will now follow.
+
+**Why this matters (macro overlay).** Two structural patterns this fix addresses: (1) intent drift — a feature ships, intent gets lost, no doc catches it; (2) silent feature growth — agents added without updating the inventory. Both work against goal (1) "stay fully informed" because they erode the user's mental model of what the system is doing on his behalf. Going forward, any schedule change requires a paired update to the plist AND `_modes_for_current_time()` AND the CLAUDE.md schedule table.
+
+**Deferred items from v2.7.2 are now closed in v2.7.3** — see the v2.7.3 entry above. `run_morning_briefing_v2()` and `format_morning_text()` deleted; `format_premarket_text` / `format_weekend_text` docstrings corrected.
+
+**Deployment.** Drive-side change; reaches production via 4:50 AM Monday `com.briefing.deploy` auto-sync. **Important:** `deploy.sh` only syncs the three plists currently mirrored in Drive (deploy, monitor, lunarcrush). For same-day effect, run `~/Claude/morning-briefing/scripts/deploy.sh --reload` from Terminal — that will reload all loaded LaunchAgents including the updated lunarcrush + monitor plists.
+
+## Recent Changes (2026-05-23 — v2.7.1 monitor false-positive fix)
+
+**Trigger.** User received a monitor email reading `MORNING: stale — Log is 7h 30m old (max 3h for this workflow)` alongside `RECAP: warning · stderr: ['BRKB']: possibly delisted; no price data found`. Both were false positives.
+
+**Root causes.**
+1. **One CLI invocation for three different watchdog times.** `com.briefing.monitor.plist` fires at 5:10 AM, 6:30 AM, and 1:25 PM, but all three invocations called `briefing_monitor.py all`, which validates every workflow's log against its `WORKFLOW_MAX_AGE_HOURS`. Morning's max is 3h — correct for the 5:10 AM check, but by 1:25 PM the morning log is ~8h old, so the recap-check run always flagged morning as stale. Recurring daily noise.
+2. **Yahoo "possibly delisted" wording wasn't in the noise filter.** `KNOWN_NOISE_PATTERNS` caught `"Quote not found for symbol:"` but not `"possibly delisted; no price data found"`. BRKB (Berkshire B) is not delisted; Yahoo flakes on it intermittently.
+
+**Changes.**
+1. **`_modes_for_current_time()` in `briefing_monitor.py`.** Returns the workflow(s) the monitor should check based on local hour: 5-6 → morning; 6-8 → premarket + lunarcrush; 13-15 → recap; else all four. Single source of truth for the dispatch table.
+2. **`--by-time` CLI flag in `briefing_monitor.py`.** `main()` calls `_modes_for_current_time()` when invoked with `--by-time`; `all` and explicit workflow names still work unchanged. `main()` also now accepts multiple workflow names as positional args.
+3. **`com.briefing.monitor.plist` now passes `--by-time`** instead of `all`. Each scheduled run validates only the workflow that just fired.
+4. **Added `"possibly delisted; no price data found"`** to `KNOWN_NOISE_PATTERNS` so the BRKB transient stops surfacing as a warning.
+
+**Why this matters.** Monitor noise is corrosive — once alerts are routinely false, real alerts get ignored. This was firing every weekday at 1:25 PM (and on Fridays the email was sitting unread Saturday morning, which is when the user spotted it). The fix collapses the alert surface to "something actually went wrong with the workflow that just ran."
+
+**Deployment.** Drive-side change; will reach production via the 4:50 AM Monday `com.briefing.deploy` auto-sync, which reloads all six LaunchAgents (picking up the new plist). For immediate effect, run `~/Claude/morning-briefing/scripts/deploy.sh --reload` from Terminal.
 
 ## Recent Changes (2026-05-22 — v2.7 stale-lead + bearish-hyperbole fix)
 

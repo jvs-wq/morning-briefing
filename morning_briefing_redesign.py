@@ -1590,60 +1590,7 @@ def format_market_recap_html(data, ai_brief=None):
 
 
 # ============================================================================
-# 3. PLAIN TEXT FORMATTING FOR iMESSAGE
-# ============================================================================
-
-def format_morning_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
-    """
-    Format a concise plain-text version of the morning brief.
-    Designed to fit in a single ~1500-char chunk on the lock screen.
-    Full analysis lives in the HTML email.
-    """
-    snapshot = data.get("market_snapshot", {})
-    movers = data.get("premarket_movers", [])
-
-    now = datetime.now()
-    date_str = now.strftime("%A, %B %d")
-    time_str = now.strftime("%I:%M %p PT").lstrip("0")
-
-    # Market snapshot — compact one-liner
-    sp = snapshot.get("sp500_futures")
-    sp_chg = snapshot.get("sp500_change")
-    nq = snapshot.get("nasdaq_futures")
-    nq_chg = snapshot.get("nasdaq_change")
-    treas = snapshot.get("treasury_10y")
-    sp_str = f"S&P {sp:,.0f} ({'+' if sp_chg >= 0 else ''}{sp_chg:.1f}%)" if sp and sp_chg is not None else ""
-    nq_str = f"NQ {nq:,.0f} ({'+' if nq_chg >= 0 else ''}{nq_chg:.1f}%)" if nq and nq_chg is not None else ""
-    tr_str = f"10Y {treas:.2f}%" if treas else ""
-    mkt_line = " · ".join(x for x in [sp_str, nq_str, tr_str] if x)
-
-    # Top 3 movers — one line each
-    mover_lines = ""
-    for m in movers[:3]:
-        sym = m.get("symbol", "?")
-        chg = m.get("change_pct", 0)
-        sign = "+" if chg >= 0 else ""
-        mover_lines += f"  {sym:<6} {sign}{chg:.1f}%\n"
-
-    text = f"""MORNING BRIEF · {date_str}
-
-{mkt_line}
-
-▸ WHAT MATTERS
-
-{ai_brief.get('what_matters', 'No data available')}
-
-TOP MOVERS:
-{mover_lines}
-───────────────────────────────
-{time_str} · Full brief → email
-"""
-
-    return text
-
-
-# ============================================================================
-# 4. EMAIL SENDING VIA APPLE MAIL APPLESCRIPT
+# 3. EMAIL SENDING VIA APPLE MAIL APPLESCRIPT
 # ============================================================================
 
 def send_html_email(
@@ -1721,92 +1668,6 @@ def send_html_email(
 
     print(f"✗ Failed to send HTML email after {max_retries} attempts")
     return False
-
-
-# ============================================================================
-# 5. MAIN ORCHESTRATION FUNCTION
-# ============================================================================
-
-def run_morning_briefing_v2(
-    api_key: str,
-    email_recipient: str,
-    imessage_recipient: str,
-    market_snapshot: dict[str, Any],
-    premarket_movers: list[dict[str, Any]],
-    filtered_news: list[dict[str, Any]],
-    scorecard: list[dict[str, Any]],
-    earnings: list[dict[str, Any]],
-    rsi_alerts: list[dict[str, Any]],
-    vk_highlights: list[dict[str, Any]],
-    miss_explanations: dict[str, str],
-) -> None:
-    """
-    Run the complete morning briefing pipeline: AI generation, formatting, and delivery.
-
-    This function:
-    1. Bundles all market data
-    2. Generates AI-powered editorial brief
-    3. Formats HTML email and plain text iMessage
-    4. Sends both via Apple Mail and Messages.app
-
-    Args:
-        api_key: Anthropic API key
-        email_recipient: Email address for HTML brief
-        imessage_recipient: Phone number or email for iMessage
-        [All other args: market data as collected by existing functions]
-    """
-
-    print("\n" + "=" * 70)
-    print("MORNING BRIEFING v2 - STARTING")
-    print("=" * 70)
-
-    # Bundle all data
-    data = {
-        "market_snapshot": market_snapshot,
-        "premarket_movers": premarket_movers,
-        "filtered_news": filtered_news,
-        "scorecard": scorecard,
-        "earnings": earnings,
-        "rsi_alerts": rsi_alerts,
-        "vk_highlights": vk_highlights,
-        "miss_explanations": miss_explanations,
-        "social_alerts": [],  # Morning brief has no social data
-        "creator_signals": [],
-    }
-
-    print("\n[1/4] Generating AI intelligence brief...")
-    ai_brief = generate_ai_morning_brief(data, api_key)
-    print("✓ AI brief generated")
-
-    print("\n[2/4] Formatting HTML email...")
-    html_email = format_morning_html(ai_brief, data)
-    print(f"✓ HTML email formatted ({len(html_email)} bytes)")
-
-    print("\n[3/4] Formatting plain-text email fallback...")
-    text_message = format_morning_text(ai_brief, data)
-    print(f"✓ Plain text formatted ({len(text_message)} chars)")
-
-    print("\n[4/4] Sending via Apple Mail...")
-
-    # Send HTML email
-    email_sent = send_html_email(
-        recipient=email_recipient,
-        subject=f"Morning Brief – {datetime.now().strftime('%b %d')}",
-        html_body=html_email,
-    )
-
-
-    # Summary
-    print("\n" + "=" * 70)
-    if email_sent and imessage_sent:
-        print("✓ MORNING BRIEFING COMPLETE – Email and iMessage sent")
-    elif email_sent:
-        print("⚠ PARTIAL – Email sent, iMessage failed")
-    elif imessage_sent:
-        print("⚠ PARTIAL – iMessage sent, Email failed")
-    else:
-        print("✗ BRIEFING FAILED – Both deliveries unsuccessful")
-    print("=" * 70 + "\n")
 
 
 def _format_snapshot_text(snapshot: dict[str, Any]) -> str:
@@ -2322,7 +2183,8 @@ Bell Plan
 
 
 def format_premarket_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
-    """Format a concise pre-market iMessage teaser (single chunk)."""
+    """Concise plain-text version of the pre-market brief — used as the email body when
+    HTML rendering is unavailable, and as the console summary for ops visibility."""
     snapshot = data.get("market_snapshot", {})
     movers = data.get("premarket_movers", [])
 
@@ -2600,7 +2462,8 @@ Watch List
 
 
 def format_weekend_text(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
-    """Concise Sunday-night iMessage teaser (single chunk)."""
+    """Concise plain-text version of the Sunday-night weekend preview — used as the email
+    body when HTML rendering is unavailable, and as the console summary for ops visibility."""
     snapshot = data.get("market_snapshot", {})
 
     now = datetime.now()
