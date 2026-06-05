@@ -1,7 +1,13 @@
 # Morning Briefing — Project State
 
-**Last updated:** 2026-05-23
-**Status:** Production — v2.7.4 plist consolidation + multi-machine Drive bridge unblocked (Drive-side; reaches prod via Monday 4:50 AM auto-sync, or `scripts/deploy.sh --reload` for immediate effect)
+**Last updated:** 2026-06-04
+**Status:** Production — holdings universe refreshed (Drive-side, **not yet deployed**; reaches prod via next 4:50 AM weekday auto-sync — Fri 6/5 — or `scripts/deploy.sh --reload` for immediate effect)
+
+### Changelog — 2026-06-04 (holdings refresh)
+- **CONFIG holdings re-ingested.** `INDIVIDUAL_STOCKS` + `ETFS` rebuilt from `SummPosn_Grp_JVS_Portfolio_060426.csv` (full personal book, 63 stocks + 7 ETFs) ∪ `SummPosn_Mast_8000075_06042026.csv` (firm MASTER account — **top 30 equity positions by market value only**, per Jeff's instruction). Firm contribution is now capped at the 30 largest stocks; firm ETFs (AKRE, IBB, VDE, VGHAX, XLE) and sub-top-30 firm names are intentionally out of scope.
+- **Net:** 70 stocks (count unchanged, composition changed) + 7 ETFs = 77 total (was 84). Stocks added: CHTR, DVN, FDXF, IPWR, LPKFF, MDT, POWI, SOLS, SU, ZBH. Stocks dropped: BMNR, COST, CVS, IFF, NU, SLB, TROW, UNP, VSNT, VWAPY (none in fresh personal book or firm top-30). ETFs added: VBIL; dropped: AKRE, DFAS, DVYE, IBB, UVXY, VDE, VGHAX, XLE.
+- Validated: `py_compile` clean; AST extract confirms 70/7 with no duplicates. **Not committed/pushed** from this session — left for the normal deploy mechanic. The two source CSVs live in the synced Google Drive project folder, not the local-only edit-surface mirror.
+- Produced a same-day one-off brief from the new universe: `Morning_Brief_2026-06-04.html`.
 
 ---
 

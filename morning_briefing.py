@@ -155,28 +155,27 @@ CONFIG = {
     # Delivery
     "EMAIL_RECIPIENT": os.getenv("EMAIL_RECIPIENT", ""),
 
-    # Holdings — combined personal (JVS) ∪ BCM portfolios
-    # Updated 2026-04-23 from SummPosn_Grp_JVS_Portfolio_042326.csv + BCM Top holdings 041326.xlsx (Sheet1)
-    # Personal: 55 stocks + 9 ETFs | BCM top holdings: 39 stocks + 5 ETFs/funds | Combined: 70 stocks + 14 ETFs = 84 total
+    # Holdings — combined personal (JVS) ∪ firm-master top-30 stocks
+    # Updated 2026-06-04 from SummPosn_Grp_JVS_Portfolio_060426.csv (full personal book)
+    #   + SummPosn_Mast_8000075_06042026.csv (firm MASTER account, top 30 stock holdings by market value only, per Jeff)
+    # Firm contribution capped at the 30 largest equity positions; firm ETFs and sub-top-30 names intentionally excluded.
+    # Personal: 63 stocks + 7 ETFs | Firm top-30 stocks | Combined: 70 stocks + 7 ETFs = 77 total
     "INDIVIDUAL_STOCKS": [
-        # --- Both personal & BCM ---
-        "AAPL", "ABNB", "AMAT", "AMZN", "BAC", "C", "CMCSA", "COF", "DE", "ELV",
-        "EQT", "FDX", "FISV", "FSLR", "GOOG", "META", "MSGS", "MSFT", "MTN", "MU",
-        "NVDA", "SCHW", "UBER", "VSNT", "WFC",
+        # --- Held in both personal & firm-top30 ---
+        "AAPL", "AMAT", "AMZN", "ARCC", "BAC", "BRKB", "C", "CMCSA", "CNH", "COF",
+        "FCX", "FDX", "FISV", "GOOG", "META", "MSFT", "MU", "NVDA", "RIO", "SCHW",
+        "UBER", "WFC", "WY",
         # --- Personal only ---
-        "ABCL", "ADDYY", "AFRM", "AMD", "ARCC", "ASML", "AVAV", "BMNR", "BRKB",
-        "CNH", "FCX", "GILD", "GLXY", "HIMS", "ISRG", "NBIS", "NFG", "NU",
-        "ODD", "OUST", "PEYUF", "PLTR", "RIG", "RIO", "SOFI", "TDW", "TSLA",
-        "VGZ", "VWAPY", "WY", "ZETA",
-        # --- BCM only (not in personal, but top holdings) ---
-        "BKR", "CHWY", "COST", "CVS", "DIS", "GOOGL", "GS", "IFF",
-        "JNJ", "JPM", "PFE", "SLB", "TROW", "UNP",
+        "ABCL", "ABNB", "ADDYY", "AFRM", "AMD", "ASML", "AVAV", "CHTR", "CHWY", "DE",
+        "DVN", "ELV", "EQT", "FDXF", "FSLR", "GILD", "GLXY", "HIMS", "IPWR", "ISRG",
+        "LPKFF", "MDT", "MSGS", "MTN", "NBIS", "NFG", "ODD", "OUST", "PEYUF", "PLTR",
+        "POWI", "RIG", "SOFI", "SOLS", "SU", "TDW", "TSLA", "VGZ", "ZBH", "ZETA",
+        # --- Firm top-30 only (not in personal book) ---
+        "BKR", "DIS", "GOOGL", "GS", "JNJ", "JPM", "PFE",
     ],
     "ETFS": [
-        # --- Personal ETFs ---
-        "CSRE", "DFAS", "DFEM", "DFEV", "DVYE", "GDX", "GDXJ", "URNM", "UVXY",
-        # --- BCM ETFs/funds ---
-        "AKRE", "IBB", "VDE", "VGHAX", "XLE",
+        # --- Personal ETFs (firm master is equity-only / out of scope per top-30-stocks instruction) ---
+        "CSRE", "DFEM", "DFEV", "GDX", "GDXJ", "URNM", "VBIL",
     ],
 
     # Social buzz threshold (% week-over-week engagement increase to flag)
