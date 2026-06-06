@@ -1,7 +1,13 @@
 # Morning Briefing — Project State
 
-**Last updated:** 2026-06-04
-**Status:** Production — holdings universe refreshed (Drive-side, **not yet deployed**; reaches prod via next 4:50 AM weekday auto-sync — Fri 6/5 — or `scripts/deploy.sh --reload` for immediate effect)
+**Last updated:** 2026-06-06
+**Status:** Production — holdings universe refreshed again (Drive-side, **not yet deployed**; reaches prod via next 4:50 AM weekday auto-sync — Mon 6/8 — or `scripts/deploy.sh --reload` for immediate effect)
+
+### Changelog — 2026-06-06 (holdings refresh)
+- **CONFIG holdings re-ingested** using the established 6/4 recipe: full personal book (`SummPosn_Grp_JVS_Portfolio_060626.csv`, as-of 06/05 close) ∪ firm MASTER top-30 equities by market value (`SummPosn_Mast_8000075_060526.csv`). Firm ETFs and sub-top-30 firm names remain out of scope. New rule applied: zero-quantity personal rows excluded.
+- **Net diff vs 6/4:** +TMUS (new personal position, 45 sh). −FDXF and −VBIL (both zero-quantity in the personal book; firm VBIL is an ETF and out of scope; firm FDXF ~$2.5M is sub-top-30). Now 70 stocks + 6 ETFs = 76 total (was 77).
+- **Firm top-30 churn (no universe impact):** DE fell below the firm top-30 cutoff (#31, $4.48M vs JPM's $5.18M at #30) but stays in the universe via the personal book. The both/personal-only annotations in CONFIG reflect 6/4 overlap groupings; membership is what matters functionally.
+- Validated: `py_compile` clean; AST check confirms 70/6 with zero duplicates and exact match to the computed union. Source CSVs copied into the project folder. **Not committed/pushed** — lands via Monday 6/8 4:50 AM auto-sync.
 
 ### Changelog — 2026-06-04 (holdings refresh)
 - **CONFIG holdings re-ingested.** `INDIVIDUAL_STOCKS` + `ETFS` rebuilt from `SummPosn_Grp_JVS_Portfolio_060426.csv` (full personal book, 63 stocks + 7 ETFs) ∪ `SummPosn_Mast_8000075_06042026.csv` (firm MASTER account — **top 30 equity positions by market value only**, per Jeff's instruction). Firm contribution is now capped at the 30 largest stocks; firm ETFs (AKRE, IBB, VDE, VGHAX, XLE) and sub-top-30 firm names are intentionally out of scope.
@@ -163,17 +169,17 @@ Drive mirror:     ~/My Drive/Claude-Workspace/Claude Projects/Morning Briefing/ 
 | `launchd/com.briefing.deploy.plist` | Production + Drive + GitHub + `~/Library/LaunchAgents/` | 4:50 AM weekday auto-sync. |
 | `migrations/v2_6_*.py` | Production + Drive + GitHub | Idempotent migration scripts. Audit trail. |
 | `.env` | Production only (gitignored) | API keys + recipient config |
-| `com.briefing.*.plist` | `~/Library/LaunchAgents/` | Six LaunchAgents (see above) |
+| `com.briefing.*.plist` | `launchd/` (canonical, Drive) + `~/Library/LaunchAgents/` (mirrored by deploy.sh) | Seven LaunchAgents (see above) |
 
 ### Deploy workflow (going forward)
 1. User edits files in Drive folder via Cowork (`~/My Drive/Claude-Workspace/Claude Projects/Morning Briefing/`).
-2. `com.briefing.deploy` fires at 4:50 AM Mon–Fri: SHA-diffs Drive vs prod, copies Drive→prod if drift, py_compile validates, runs v2.6 guard, commits + pushes to `origin/main`, reloads all six LaunchAgents.
+2. `com.briefing.deploy` fires at 4:50 AM Mon–Fri: SHA-diffs Drive vs prod, copies Drive→prod if drift, py_compile validates, runs v2.6 guard, mirrors `launchd/*.plist` → `~/Library/LaunchAgents/` (v2.7.4), commits + pushes to `origin/main`, reloads the six non-deploy LaunchAgents (deploy never reloads itself).
 3. `com.briefing.morning` fires at 5:00 AM running the fresh code.
 4. `com.briefing.monitor` at 5:10 AM verifies success AND re-runs the drift check; emails alert on any failure or drift.
 5. If a fix can't wait until tomorrow morning, run `~/Claude/morning-briefing/scripts/deploy.sh --reload` from Terminal — same flow, immediate.
 
 ## Open Questions
-- Should the daily auto-sync also push notifications to the other two synced machines? (Currently `~/My Drive/` is local-only on this machine.)
+- Should the daily auto-sync also push notifications to the other two synced machines? (Jeff confirmed 2026-05-23 that `~/My Drive/` IS the bridge across the three machines, but sync has only been verified informally — see Known Gaps.)
 - Is Python 3.9 → 3.12 upgrade worth the risk of breaking other scripts on the iMac?
 - Worth expanding market snapshot to include VIX / oil / gold / BTC / DXY?
 
@@ -182,7 +188,7 @@ Drive mirror:     ~/My Drive/Claude-Workspace/Claude Projects/Morning Briefing/ 
 |------|----------|-----------|
 | 2026-05-19 | v2.6: auto-sync Drive→prod + import-time guard + drift alarm | Recurring deploy-drift bug — solve structurally, not via discipline. |
 | 2026-05-19 | Production is canonical git working tree; Drive is edit-surface mirror | Avoids the "Drive is canonical but lacks recent prod commits" trap. |
-| 2026-05-19 | `format_morning_text()` survives as email plain-text fallback | Useful even without iMessage; HTML-render-failure backstop. |
+| 2026-05-19 | `format_morning_text()` survives as email plain-text fallback | Useful even without iMessage; HTML-render-failure backstop. **Reversed in v2.7.3 (2026-05-23): deleted — the real live fallback is `format_briefing` on AI-generation failure.** |
 | 2026-05-18 | Email-only dispatch (no iMessage) | iMessage delivery flaky and noisy; HTML email proven reliable. |
 | 2026-04-06 | v2 redesign: AI editorial brief | Old format was a data dump with gaps. |
 | 2026-04-06 | Use Claude Sonnet for brief generation | Faster + cheaper for daily automation; quality sufficient. |

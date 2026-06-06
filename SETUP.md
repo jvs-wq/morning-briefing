@@ -33,9 +33,9 @@ Layered on top of v2.6's anti-drift hardening. The brief no longer leads with st
 
 ## v2.6 Quick Reference (2026-05-19)
 
-If you are reading this after a fresh rebuild, the system now expects six LaunchAgents and a Drive↔production auto-sync. The full rebuild path below is updated; the additions over v2.5 are:
+If you are reading this after a fresh rebuild, the system now expects **seven** LaunchAgents (as of v2.7.2 — LunarCrush moved to its own Sunday agent; see the Section 4 inventory table) and a Drive↔production auto-sync. The full rebuild path below is updated; the additions over v2.5 are:
 
-1. **Six LaunchAgents** (not five): `com.briefing.deploy` (4:50 AM weekdays) is now required. It runs `scripts/deploy.sh --reload` to mirror Drive → production, commit + push to GitHub, and reload all briefing agents before the 5:00 AM morning run.
+1. **`com.briefing.deploy`** (4:50 AM weekdays) is now required. It runs `scripts/deploy.sh --reload` to mirror Drive → production, commit + push to GitHub, and reload all briefing agents before the 5:00 AM morning run.
 2. **`scripts/deploy.sh`** is the only correct way to push code from Drive to production. Manual `cp` works in a pinch but skips the py_compile validation and the v2.6 anti-regression guard.
 3. **`_v2_6_guard()` in `morning_briefing.py`** runs on import and exits 99 if any iMessage symbol (`send_imessage`, `IMESSAGE_RECIPIENT`, `_chunk_message`) reappears. This is intentional: the entire iMessage send path was removed in v2.6 and the guard prevents accidental re-introduction.
 4. **Deploy-drift alarm in `briefing_monitor.py`** SHA-compares production against Drive every monitor run and emails an alert if they drift.

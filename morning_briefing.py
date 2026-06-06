@@ -156,10 +156,11 @@ CONFIG = {
     "EMAIL_RECIPIENT": os.getenv("EMAIL_RECIPIENT", ""),
 
     # Holdings — combined personal (JVS) ∪ firm-master top-30 stocks
-    # Updated 2026-06-04 from SummPosn_Grp_JVS_Portfolio_060426.csv (full personal book)
-    #   + SummPosn_Mast_8000075_06042026.csv (firm MASTER account, top 30 stock holdings by market value only, per Jeff)
+    # Updated 2026-06-06 from SummPosn_Grp_JVS_Portfolio_060626.csv (full personal book, as of 06/05 close)
+    #   + SummPosn_Mast_8000075_060526.csv (firm MASTER account, top 30 stock holdings by market value only, per Jeff)
     # Firm contribution capped at the 30 largest equity positions; firm ETFs and sub-top-30 names intentionally excluded.
-    # Personal: 63 stocks + 7 ETFs | Firm top-30 stocks | Combined: 70 stocks + 7 ETFs = 77 total
+    # Zero-quantity personal rows (FDXF, VBIL) excluded.
+    # Personal: 63 stocks + 6 ETFs | Firm top-30 stocks | Combined: 70 stocks + 6 ETFs = 76 total
     "INDIVIDUAL_STOCKS": [
         # --- Held in both personal & firm-top30 ---
         "AAPL", "AMAT", "AMZN", "ARCC", "BAC", "BRKB", "C", "CMCSA", "CNH", "COF",
@@ -167,15 +168,15 @@ CONFIG = {
         "UBER", "WFC", "WY",
         # --- Personal only ---
         "ABCL", "ABNB", "ADDYY", "AFRM", "AMD", "ASML", "AVAV", "CHTR", "CHWY", "DE",
-        "DVN", "ELV", "EQT", "FDXF", "FSLR", "GILD", "GLXY", "HIMS", "IPWR", "ISRG",
-        "LPKFF", "MDT", "MSGS", "MTN", "NBIS", "NFG", "ODD", "OUST", "PEYUF", "PLTR",
-        "POWI", "RIG", "SOFI", "SOLS", "SU", "TDW", "TSLA", "VGZ", "ZBH", "ZETA",
+        "DVN", "ELV", "EQT", "FSLR", "GILD", "GLXY", "HIMS", "IPWR", "ISRG", "LPKFF",
+        "MDT", "MSGS", "MTN", "NBIS", "NFG", "ODD", "OUST", "PEYUF", "PLTR", "POWI",
+        "RIG", "SOFI", "SOLS", "SU", "TDW", "TMUS", "TSLA", "VGZ", "ZBH", "ZETA",
         # --- Firm top-30 only (not in personal book) ---
         "BKR", "DIS", "GOOGL", "GS", "JNJ", "JPM", "PFE",
     ],
     "ETFS": [
         # --- Personal ETFs (firm master is equity-only / out of scope per top-30-stocks instruction) ---
-        "CSRE", "DFEM", "DFEV", "GDX", "GDXJ", "URNM", "VBIL",
+        "CSRE", "DFEM", "DFEV", "GDX", "GDXJ", "URNM",
     ],
 
     # Social buzz threshold (% week-over-week engagement increase to flag)

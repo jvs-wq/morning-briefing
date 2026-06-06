@@ -1,8 +1,21 @@
 # Morning Briefing
 
-Automated stock-market intelligence brief for a concentrated investment portfolio. Monitors 84 holdings (70 stocks + 14 ETFs) and delivers AI-generated editorial analysis via HTML email on a weekday + Sunday-evening schedule. Email-only as of 2026-05-18.
+Automated stock-market intelligence brief for a concentrated investment portfolio. Monitors 76 holdings (70 stocks + 6 ETFs — full personal book ∪ firm MASTER top-30 equities, refreshed 2026-06-06) and delivers AI-generated editorial analysis via HTML email on a weekday + Sunday-evening schedule. Email-only as of 2026-05-18.
 
 **Macro frame.** This system exists to help Jeff stay reasonably abreast of major developments in his personal and firm portfolios with two goals: (1) keep him fully informed; (2) preemptively flag signal from noise. Features that create noise are regressions even if they "work."
+
+## Holdings Universe Refreshes (2026-06-04, 2026-06-06)
+
+- **New universe recipe (2026-06-04, per Jeff):** full personal book (JVS group account) ∪ firm MASTER account top-30 equity positions by market value. Firm ETFs and sub-top-30 firm names intentionally out of scope.
+- **2026-06-06 refresh:** +TMUS (new personal position); −FDXF, −VBIL (zero-quantity rows now excluded). Net 70 stocks + 6 ETFs = 76 total. Details in `PROJECT_STATE.md`.
+
+## v2.7.3 / v2.7.4 — Dead-Code Cleanup, Premarket Fix, Plist Consolidation (2026-05-23)
+
+- **Premarket import bug fixed (v2.7.3)** — `format_premarket_text` was called but never imported; every weekday premarket had been silently NameError-ing into the legacy text-only fallback. Now delivers the AI-editorial HTML brief as intended.
+- **Dead code removed (v2.7.3)** — `run_morning_briefing_v2()` and `format_morning_text()` deleted from `morning_briefing_redesign.py`; stale iMessage-era docstrings corrected.
+- **All 7 plists consolidated into `launchd/` (v2.7.4)** — single canonical location in Drive; `deploy.sh` mirrors them to `~/Library/LaunchAgents/` so schedule edits propagate from any of the three machines. Edit plists in `launchd/`, never in `~/Library/LaunchAgents/`.
+- **Premarket exception handling narrowed (v2.7.4)** — AI generation, HTML formatting, and text formatting are now separate try-blocks; a formatting failure no longer discards the AI brief.
+- **`requirements.txt` created (v2.7.4)** — was referenced here but missing from Drive.
 
 ## v2.7.2 — LunarCrush → Sunday Evening + Monitor False-Positive Fix (2026-05-23)
 
@@ -26,7 +39,7 @@ Closes a class of bug surfaced by the 2026-05-22 morning brief, which led WHAT M
 
 Closes the May-2026 deploy-drift bug class: Drive edits never reaching the iMac production tree (and vice-versa), letting stale code keep firing the iMessage briefs after they were "removed" in spec.
 
-- **iMessage fully stripped** — removed `send_imessage()`, `_chunk_message()`, `IMESSAGE_RECIPIENT`, and every call site in `morning_briefing.py` (5 send blocks) and `morning_briefing_redesign.py` (run_morning_briefing_v2 send + obsolete NOTE block). Monitor alerts now route through Apple Mail. `format_morning_text()` survives as the plain-text email fallback when HTML rendering fails — no iMessage path.
+- **iMessage fully stripped** — removed `send_imessage()`, `_chunk_message()`, `IMESSAGE_RECIPIENT`, and every call site in `morning_briefing.py` (5 send blocks) and `morning_briefing_redesign.py` (run_morning_briefing_v2 send + obsolete NOTE block). Monitor alerts now route through Apple Mail. `format_morning_text()` survives as the plain-text email fallback when HTML rendering fails — no iMessage path. *(Correction: deleted in v2.7.3 — the live morning fallback is `format_briefing`, triggered on AI-generation failure, not HTML-rendering failure.)*
 - **Anti-regression guard** — `_v2_6_guard()` runs on module import in `morning_briefing.py`. Scans all three Python files; exits 99 if any forbidden iMessage symbol re-appears. The guard's own forbidden-symbols regex is excluded via marker-bracketed block stripping.
 - **Drive ↔ production lockstep** — new `scripts/deploy.sh` SHA-compares Drive against production, refuses to deploy if a Drive file fails `py_compile`, copies if drift exists, runs the v2.6 guard, then `git commit` + `push origin main`, optionally `--reload` the LaunchAgents.
 - **Auto-sync LaunchAgent** — `com.briefing.deploy.plist` invokes `deploy.sh --reload` at 4:50 AM Mon–Fri (10 min before the morning brief), guaranteeing Drive → production within one cycle of any edit.
@@ -41,7 +54,7 @@ Major earnings data upgrade for Q1 2026 earnings season:
 - **Revenue estimates vs actuals** — shown in scorecard and upcoming earnings calendar (from Finnhub)
 - **AI guidance analysis** — Claude infers raised/lowered/in-line from news headlines after each report
 - **Sell-side analyst actions** — upgrades, downgrades, and price target changes via yfinance (7-day window) shown in the HTML email.
-- **BCM holdings update** — at the time, 74 stocks + 15 ETFs = 89 total. *Has since been refreshed 2026-04-23 to 70 stocks + 14 ETFs = 84 total — see `PROJECT_STATE.md` and the heading line at the top of this README.*
+- **BCM holdings update** — at the time, 74 stocks + 15 ETFs = 89 total. *Has since been refreshed repeatedly — most recently 2026-06-06 to 70 stocks + 6 ETFs = 76 total under the personal-book ∪ firm-top-30 recipe — see `PROJECT_STATE.md` and the heading line at the top of this README.*
 - **dotenv fix** — `_load_dotenv()` uses direct assignment instead of `setdefault` to avoid empty shell env var masking
 
 ## v2 — AI Editorial Intelligence (2026-04-06)
