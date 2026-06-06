@@ -1,13 +1,13 @@
 # Morning Briefing — Project State
 
 **Last updated:** 2026-06-06
-**Status:** Production — holdings universe refreshed again (Drive-side, **not yet deployed**; reaches prod via next 4:50 AM weekday auto-sync — Mon 6/8 — or `scripts/deploy.sh --reload` for immediate effect)
+**Status:** Production — holdings universe refreshed and **DEPLOYED 2026-06-06** via `scripts/deploy.sh --reload` (Drive→prod synced, committed + pushed to `origin/main`, all briefing agents reloaded).
 
 ### Changelog — 2026-06-06 (holdings refresh)
 - **CONFIG holdings re-ingested** using the established 6/4 recipe: full personal book (`SummPosn_Grp_JVS_Portfolio_060626.csv`, as-of 06/05 close) ∪ firm MASTER top-30 equities by market value (`SummPosn_Mast_8000075_060526.csv`). Firm ETFs and sub-top-30 firm names remain out of scope. New rule applied: zero-quantity personal rows excluded.
 - **Net diff vs 6/4:** +TMUS (new personal position, 45 sh). −FDXF and −VBIL (both zero-quantity in the personal book; firm VBIL is an ETF and out of scope; firm FDXF ~$2.5M is sub-top-30). Now 70 stocks + 6 ETFs = 76 total (was 77).
 - **Firm top-30 churn (no universe impact):** DE fell below the firm top-30 cutoff (#31, $4.48M vs JPM's $5.18M at #30) but stays in the universe via the personal book. The both/personal-only annotations in CONFIG reflect 6/4 overlap groupings; membership is what matters functionally.
-- Validated: `py_compile` clean; AST check confirms 70/6 with zero duplicates and exact match to the computed union. Source CSVs copied into the project folder. **Not committed/pushed** — lands via Monday 6/8 4:50 AM auto-sync.
+- Validated: `py_compile` clean; AST check confirms 70/6 with zero duplicates and exact match to the computed union. Source CSVs copied into the project folder. **Deployed 2026-06-06** via `scripts/deploy.sh --reload` — Drive→prod synced, committed + pushed to `origin/main`, all five briefing LaunchAgents reloaded (no longer waiting on the Monday 6/8 auto-sync).
 
 ### Changelog — 2026-06-04 (holdings refresh)
 - **CONFIG holdings re-ingested.** `INDIVIDUAL_STOCKS` + `ETFS` rebuilt from `SummPosn_Grp_JVS_Portfolio_060426.csv` (full personal book, 63 stocks + 7 ETFs) ∪ `SummPosn_Mast_8000075_06042026.csv` (firm MASTER account — **top 30 equity positions by market value only**, per Jeff's instruction). Firm contribution is now capped at the 30 largest stocks; firm ETFs (AKRE, IBB, VDE, VGHAX, XLE) and sub-top-30 firm names are intentionally out of scope.
