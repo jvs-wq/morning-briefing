@@ -156,21 +156,23 @@ CONFIG = {
     "EMAIL_RECIPIENT": os.getenv("EMAIL_RECIPIENT", ""),
 
     # Holdings — combined personal (JVS) ∪ firm-master top-30 stocks
-    # Updated 2026-06-06 from SummPosn_Grp_JVS_Portfolio_060626.csv (full personal book, as of 06/05 close)
-    #   + SummPosn_Mast_8000075_060526.csv (firm MASTER account, top 30 stock holdings by market value only, per Jeff)
+    # Personal book updated 2026-06-20 from SummPosn_Grp_JVS_Portfolio_062026.csv (full personal book, as of 06/19 close).
+    #   Personal changes vs prior (06/06): +LBRDK; -CHTR, -MSGS, -SU.
+    # Firm top-30 UNCHANGED — carried over from 2026-06-05 SummPosn_Mast_8000075_060526.csv.
+    #   No new firm MASTER CSV was supplied this cycle, so the firm contribution is NOT re-derived (avoids guessing the top-30).
     # Firm contribution capped at the 30 largest equity positions; firm ETFs and sub-top-30 names intentionally excluded.
-    # Zero-quantity personal rows (FDXF, VBIL) excluded.
-    # Personal: 63 stocks + 6 ETFs | Firm top-30 stocks | Combined: 70 stocks + 6 ETFs = 76 total
+    # Mutual funds (DODFX, SGOIX) and options positions excluded per scope. No zero-qty rows in the 06/19 export.
+    # Personal: 61 stocks + 6 ETFs | Firm top-30 stocks | Combined: 68 stocks + 6 ETFs = 74 total
     "INDIVIDUAL_STOCKS": [
         # --- Held in both personal & firm-top30 ---
         "AAPL", "AMAT", "AMZN", "ARCC", "BAC", "BRKB", "C", "CMCSA", "CNH", "COF",
         "FCX", "FDX", "FISV", "GOOG", "META", "MSFT", "MU", "NVDA", "RIO", "SCHW",
         "UBER", "WFC", "WY",
         # --- Personal only ---
-        "ABCL", "ABNB", "ADDYY", "AFRM", "AMD", "ASML", "AVAV", "CHTR", "CHWY", "DE",
-        "DVN", "ELV", "EQT", "FSLR", "GILD", "GLXY", "HIMS", "IPWR", "ISRG", "LPKFF",
-        "MDT", "MSGS", "MTN", "NBIS", "NFG", "ODD", "OUST", "PEYUF", "PLTR", "POWI",
-        "RIG", "SOFI", "SOLS", "SU", "TDW", "TMUS", "TSLA", "VGZ", "ZBH", "ZETA",
+        "ABCL", "ABNB", "ADDYY", "AFRM", "AMD", "ASML", "AVAV", "CHWY", "DE", "DVN",
+        "ELV", "EQT", "FSLR", "GILD", "GLXY", "HIMS", "IPWR", "ISRG", "LBRDK", "LPKFF",
+        "MDT", "MTN", "NBIS", "NFG", "ODD", "OUST", "PEYUF", "PLTR", "POWI", "RIG",
+        "SOFI", "SOLS", "TDW", "TMUS", "TSLA", "VGZ", "ZBH", "ZETA",
         # --- Firm top-30 only (not in personal book) ---
         "BKR", "DIS", "GOOGL", "GS", "JNJ", "JPM", "PFE",
     ],

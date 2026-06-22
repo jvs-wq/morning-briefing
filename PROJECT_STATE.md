@@ -1,7 +1,14 @@
 # Morning Briefing — Project State
 
-**Last updated:** 2026-06-06
-**Status:** Production — holdings universe refreshed and **DEPLOYED 2026-06-06** via `scripts/deploy.sh --reload` (Drive→prod synced, committed + pushed to `origin/main`, all briefing agents reloaded).
+**Last updated:** 2026-06-20
+**Status:** Production. Personal-book holdings refreshed in the Drive edit surface on 2026-06-20 (see changelog). **NOT yet deployed to prod** as of this edit — pending deploy decision (next weekday 4:50 AM auto-sync will pick it up otherwise).
+
+### Changelog — 2026-06-20 (personal-book refresh)
+- **Personal side re-ingested** from `SummPosn_Grp_JVS_Portfolio_062026.csv` (full personal book, as-of 06/19 close, 61 equities + 6 ETFs; mutual funds DODFX/SGOIX and options excluded per scope; no zero-qty rows).
+- **Net personal diff vs 6/6:** +LBRDK (Liberty Broadband C, 495 sh). −CHTR, −MSGS, −SU (sold out of personal book; none were in the firm top-30, so they drop from the universe entirely).
+- **Firm top-30 NOT refreshed.** Jeff supplied only the personal CSV this cycle. Firm contribution carried over unchanged from the 2026-06-05 `SummPosn_Mast_8000075_060526.csv` to avoid re-deriving the top-30 from a stale file. Re-run the full recipe when a fresh firm MASTER CSV is supplied.
+- **New universe:** 68 stocks + 6 ETFs = 74 total (was 76).
+- Validated: `py_compile` clean; AST check confirms 68/6 with zero duplicates, the three sells removed, LBRDK added, firm-only names intact. Source CSV copied into the project folder.
 
 ### Changelog — 2026-06-06 (holdings refresh)
 - **CONFIG holdings re-ingested** using the established 6/4 recipe: full personal book (`SummPosn_Grp_JVS_Portfolio_060626.csv`, as-of 06/05 close) ∪ firm MASTER top-30 equities by market value (`SummPosn_Mast_8000075_060526.csv`). Firm ETFs and sub-top-30 firm names remain out of scope. New rule applied: zero-quantity personal rows excluded.
