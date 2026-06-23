@@ -158,7 +158,7 @@ def generate_ai_morning_brief(data: dict[str, Any], api_key: str) -> dict[str, s
 
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=4096,
             system=BRIEFING_SYSTEM_PROMPT,
             messages=[
@@ -454,7 +454,7 @@ def generate_ai_recap_brief(data: dict[str, Any], api_key: str) -> dict[str, str
 
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=4096,
             system=RECAP_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": payload}],
@@ -1984,7 +1984,7 @@ def generate_ai_premarket_brief(data: dict[str, Any], api_key: str) -> dict[str,
 
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=2048,
             system=PREMARKET_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": payload}],
@@ -2299,7 +2299,7 @@ def generate_ai_weekend_brief(data: dict[str, Any], api_key: str) -> dict[str, s
 
     try:
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=2048,
             system=WEEKEND_SYSTEM_PROMPT,
             messages=[{"role": "user", "content": payload}],

@@ -2455,7 +2455,7 @@ def filter_news_with_ai(news_items: list[dict], api_key: str) -> list[dict]:
         client = Anthropic(api_key=api_key)
 
         message = client.messages.create(
-            model="claude-sonnet-4-20250514",
+            model="claude-sonnet-4-6",
             max_tokens=4096,
             messages=[
                 {
@@ -2528,7 +2528,7 @@ Based ONLY on facts clearly stated in the news headlines, in ONE brief sentence 
 """
 
             message = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=100,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -2589,7 +2589,7 @@ Recent news headlines:
 Based ONLY on the headlines, answer in 2-3 words max: did management RAISE guidance, LOWER guidance, or is guidance IN-LINE with expectations? If unclear from headlines, say UNCLEAR. Respond with ONLY one of: raised guidance / lowered outlook / guidance in-line / unclear"""
 
             message = client.messages.create(
-                model="claude-sonnet-4-20250514",
+                model="claude-sonnet-4-6",
                 max_tokens=30,
                 messages=[{"role": "user", "content": prompt}]
             )
