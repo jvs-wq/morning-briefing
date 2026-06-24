@@ -56,6 +56,11 @@ EARNINGS GROUNDING (hard rule — do not violate):
 - If a ticker is NOT in the scorecard, do not characterize its earnings as a beat or miss. Refer to it as "reported" or "pending" only, or omit the claim.
 - Never contradict the scorecard's BEAT/MISS tag. If the row says BEAT, the ticker beat — full stop.
 
+PRICE GROUNDING (hard rule — do not violate):
+- Every dollar price, support/resistance level, or "reclaim/break of $X" statement MUST be anchored to a number that appears in the data bundle's price sections (PRE-MARKET MOVERS, PRIORITY HOLDINGS — CURRENT REFERENCE PRICE, or closing/recent prices). Never cite a price level from memory or training data.
+- Before naming a level for a ticker, confirm its current price is in the bundle and that your level is in the same neighborhood. A "reclaim $70" call on a stock the bundle shows at $134 is a hallucination and is forbidden — the named level must survive a sanity check against the reference price.
+- If a ticker has no price in the bundle, do not name a dollar level for it. Speak in terms of the catalyst or the percentage move instead.
+
 NARRATIVE-vs-TAPE CONSISTENCY (hard rule — do not violate):
 - Whenever you assert a fundamental positive (beat, raise, "inflection") about a ticker, you MUST cross-check the same ticker's price action in the data bundle (PRE-MARKET MOVERS or recent close) and reflect it.
 - If the price reaction contradicts your fundamental claim (e.g., bullish guidance but the stock is down pre-market), do NOT bury the contradiction. Lead with it: "Stock is down X% pre-market despite the raise — Street is fading the print, signals Y." Soft price reactions to apparently bullish prints are a signal in their own right.
@@ -265,6 +270,19 @@ PRE-MARKET MOVERS (>3% or strategically important):
     else:
         payload += "- No significant pre-market movers\n"
 
+    anchor_prices = data.get("anchor_prices", {})
+    if anchor_prices:
+        payload += ("\nPRIORITY HOLDINGS — CURRENT REFERENCE PRICE "
+                    "(anchor names; most are NOT moving materially — use ONLY as the "
+                    "factual price anchor when citing any level):\n")
+        for sym, info in anchor_prices.items():
+            price = info.get("price")
+            if not isinstance(price, (int, float)):
+                continue
+            chg = info.get("change_pct")
+            chg_str = f" ({'+' if chg >= 0 else ''}{chg:.1f}%)" if isinstance(chg, (int, float)) else ""
+            payload += f"- {sym}: ${price:.2f}{chg_str}\n"
+
     payload += "\nRSI ALERTS (extreme conditions):\n"
     if rsi:
         for alert in rsi[:10]:
@@ -411,6 +429,11 @@ EARNINGS GROUNDING (hard rule — do not violate):
 - When grading a print in prose, quote actual vs estimate from the scorecard row. Do not assert "X missed" or "Y beat" without the matching scorecard row in front of you.
 - If a ticker is NOT in the scorecard, do not characterize its earnings as a beat or miss. Refer to it as "reported" or "pending" only, or omit the claim.
 - Never contradict the scorecard's BEAT/MISS tag. If the row says BEAT, the ticker beat — full stop.
+
+PRICE GROUNDING (hard rule — do not violate):
+- Every dollar price, support/resistance level, or "reclaim/break of $X" statement MUST be anchored to a number that appears in the data bundle's price sections (PRE-MARKET MOVERS, PRIORITY HOLDINGS — CURRENT REFERENCE PRICE, or closing/recent prices). Never cite a price level from memory or training data.
+- Before naming a level for a ticker, confirm its current price is in the bundle and that your level is in the same neighborhood. A "reclaim $70" call on a stock the bundle shows at $134 is a hallucination and is forbidden — the named level must survive a sanity check against the reference price.
+- If a ticker has no price in the bundle, do not name a dollar level for it. Speak in terms of the catalyst or the percentage move instead.
 
 NARRATIVE-vs-TAPE CONSISTENCY (hard rule — do not violate):
 - Whenever you assert a fundamental positive (beat, raise, "inflection") about a ticker, cross-check the same ticker's close and day % from the bundle and reflect it. A bullish print + soft (or red) tape is itself a signal — name it.
@@ -1908,6 +1931,8 @@ EXAMPLES IN THIS PROMPT ARE NOT DATA (hard rule): Any ticker, price, percentage,
 
 EARNINGS GROUNDING (hard rule): Beat/miss calls come ONLY from the JUST PRINTED or EARNINGS SCORECARD rows in the data bundle (each carries an explicit BEAT/MISS tag). Quote actual vs estimate when you grade. If a ticker isn't in those rows, do not call it a beat or miss — say "reported" or "pending." Never contradict the BEAT/MISS tag.
 
+PRICE GROUNDING (hard rule — do not violate): Every dollar price, support/resistance level, or "reclaim/break of $X" statement MUST be anchored to a number that appears in the data bundle — the PRE-MARKET MOVERS section or the PRIORITY HOLDINGS — CURRENT REFERENCE PRICE section. Never cite a price level from memory or training data. Before naming any level for a ticker, confirm its current price is in the bundle and that your level is in the same neighborhood; a "reclaim $70" call on a stock the bundle shows at $134 is a hallucination and is forbidden. If a ticker has no price in the bundle, do not name a dollar level for it — speak only in terms of the catalyst or the percentage move.
+
 NARRATIVE-vs-TAPE CONSISTENCY (hard rule): If a ticker beat or raised but is trading down pre-market, the editorial must name and explain the gap (sell-the-news, guidance footnote, positioning unwind) — not lead with a bullish call while the tape is red. The bullish lead must survive the pre-market quote.
 
 VOICE & REGISTER (hard rule): Sober buy-side voice. The reader is a 23-year PM who knows the names. Forbidden bullish hyperbole: "surge," "soar," "rocket," "crushed," "blowout," "stunning," "thesis validation," "AI demand surge," "vindicates the bulls." Forbidden bearish hyperbole: "catastrophic," "catastrophe," "collapse," "collapsed," "breakdown," "disaster," "carnage," "bloodbath," "implosion," "death spiral," "annihilated," "decimated." Also forbidden: exclamation points, rhetorical questions. Replace adjectives with magnitude + mechanism — numbers and the mechanism do the work, not adverbs, symmetrically on both sides. Register is a buy-side note, not financial media.
@@ -1978,6 +2003,19 @@ def generate_ai_premarket_brief(data: dict[str, Any], api_key: str) -> dict[str,
             payload += f"- {m['symbol']}: ${m.get('price', 0):.2f} ({'+' if m.get('change_pct', 0) >= 0 else ''}{m.get('change_pct', 0):.1f}%)\n"
     else:
         payload += "- No holdings moving >2% pre-market\n"
+
+    anchor_prices = data.get("anchor_prices", {})
+    if anchor_prices:
+        payload += ("\nPRIORITY HOLDINGS — CURRENT REFERENCE PRICE "
+                    "(anchor names; most are NOT moving materially — use ONLY as the "
+                    "factual price anchor when citing any level):\n")
+        for sym, info in anchor_prices.items():
+            price = info.get("price")
+            if not isinstance(price, (int, float)):
+                continue
+            chg = info.get("change_pct")
+            chg_str = f" ({'+' if chg >= 0 else ''}{chg:.1f}%)" if isinstance(chg, (int, float)) else ""
+            payload += f"- {sym}: ${price:.2f}{chg_str}\n"
 
     today_str = datetime.now().strftime("%Y-%m-%d")
     todays = [e for e in earnings if e.get("date") == today_str]

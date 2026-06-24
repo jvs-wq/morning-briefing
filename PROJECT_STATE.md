@@ -18,6 +18,13 @@
 - **New universe:** 68 stocks + 6 ETFs = 74 total (was 76).
 - Validated: `py_compile` clean; AST check confirms 68/6 with zero duplicates, the three sells removed, LBRDK added, firm-only names intact. Source CSV copied into the project folder.
 
+### Changelog — 2026-06-15 (premarket price-grounding fix — PLTR "$70" hallucination)
+- **Bug.** The 6/15 premarket update told Jeff PLTR was "reclaiming $70" while it traded in the $130s. Root cause: the AI briefs (morning + premarket) only ever received a ticker's *current price* when it cleared the mover threshold (>2% premarket / >3% morning). On quiet days the anchor name PLTR had **no price anywhere in the data bundle**, yet both system prompts name PLTR as the ~30% anchor and repeatedly ask for tactical "levels." With no price to anchor to, Claude fabricated a stale level from training data (~$70, PLTR's 2024 range).
+- **Fix — data.** New `ANCHOR_HOLDINGS` list + `fetch_anchor_prices()` in `morning_briefing.py`. It always fetches the *current* price (premarket/postmarket/regular per market state) for the priority names regardless of move size, and both `run_morning_briefing()` and `run_premarket_update()` now bundle it as `briefing_data["anchor_prices"]`.
+- **Fix — payload.** `_build_ai_payload()` and `generate_ai_premarket_brief()` render a new "PRIORITY HOLDINGS — CURRENT REFERENCE PRICE" section so the model always sees PLTR's real price.
+- **Fix — prompt guard.** New "PRICE GROUNDING (hard rule)" in `BRIEFING_SYSTEM_PROMPT`, `PREMARKET_SYSTEM_PROMPT`, and the recap prompt: every dollar level must be anchored to a bundle price and survive a sanity check against the reference price; never cite a level from memory; if a ticker has no bundle price, name no dollar level.
+- Validated: `py_compile` clean on both modules; v2.6 guard tokens untouched; anchor-block formatter unit-checked for missing-price / missing-baseline edge cases. Developed on `claude/pltr-premarket-discrepancy-mbf79q` — **not yet deployed** (goes out via the normal `scripts/deploy.sh --reload` mechanic once merged to `main`).
+
 ### Changelog — 2026-06-06 (holdings refresh)
 - **CONFIG holdings re-ingested** using the established 6/4 recipe: full personal book (`SummPosn_Grp_JVS_Portfolio_060626.csv`, as-of 06/05 close) ∪ firm MASTER top-30 equities by market value (`SummPosn_Mast_8000075_060526.csv`). Firm ETFs and sub-top-30 firm names remain out of scope. New rule applied: zero-quantity personal rows excluded.
 - **Net diff vs 6/4:** +TMUS (new personal position, 45 sh). −FDXF and −VBIL (both zero-quantity in the personal book; firm VBIL is an ETF and out of scope; firm FDXF ~$2.5M is sub-top-30). Now 70 stocks + 6 ETFs = 76 total (was 77).

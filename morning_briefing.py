@@ -1022,6 +1022,68 @@ def fetch_premarket_movers(api_key: str, tickers: list[str], threshold: float = 
     return sorted(movers, key=lambda x: abs(x["change_pct"]), reverse=True)[:10]
 
 
+# Priority/anchor holdings whose CURRENT price must always reach the AI brief,
+# even when they are not moving enough to qualify as "movers." The editorial
+# prompts repeatedly ask for tactical price levels on these names (PLTR above
+# all, the ~30% anchor). fetch_premarket_movers only surfaces a price once a
+# name clears the mover threshold, so on quiet days the model received NO PLTR
+# price at all and invented a stale level — the 2026-06-15 "PLTR reclaiming $70"
+# hallucination while it actually traded in the $130s. fetch_anchor_prices feeds
+# a real price anchor so the "never invent a level" rule has data behind it.
+ANCHOR_HOLDINGS = [
+    "PLTR", "NVDA", "TSLA", "META", "AMZN", "GOOG", "GOOGL", "AMD", "SOFI",
+    "UBER", "MSFT", "AAPL", "JPM", "ABNB", "AFRM", "HIMS", "ASML",
+]
+
+
+def fetch_anchor_prices(tickers: list[str]) -> dict[str, dict]:
+    """Fetch current reference prices for anchor holdings regardless of move size.
+
+    Returns {symbol: {"price": float, "prev_close": float|None, "change_pct": float|None}}.
+    Uses the same yfinance market-state logic as fetch_premarket_movers: during PRE
+    the baseline is regularMarketPrice (yesterday's settlement close); during POST/CLOSED
+    the baseline is regularMarketPreviousClose. Failures are swallowed per-ticker so a
+    single bad symbol never drops the whole anchor set.
+    """
+    wanted = [t for t in ANCHOR_HOLDINGS if t in set(tickers)]
+    prices: dict[str, dict] = {}
+    if not (YFINANCE_AVAILABLE and wanted):
+        return prices
+    try:
+        import warnings
+        warnings.filterwarnings("ignore", category=FutureWarning)
+        for symbol in wanted:
+            try:
+                info = yf.Ticker(symbol).info
+                state = info.get("marketState", "REGULAR")
+                if state in ("PRE", "PREPRE"):
+                    price = info.get("preMarketPrice") or info.get("regularMarketPrice")
+                    prev_close = info.get("regularMarketPrice")
+                elif state in ("POST", "POSTPOST", "CLOSED"):
+                    price = info.get("postMarketPrice") or info.get("regularMarketPrice")
+                    prev_close = (info.get("regularMarketPreviousClose")
+                                  or info.get("regularMarketPrice"))
+                else:
+                    price = info.get("regularMarketPrice")
+                    prev_close = info.get("regularMarketPreviousClose")
+                if price:
+                    change_pct = None
+                    if prev_close and prev_close != 0 and price != prev_close:
+                        change_pct = ((price - prev_close) / prev_close) * 100
+                    prices[symbol] = {
+                        "price": price,
+                        "prev_close": prev_close,
+                        "change_pct": change_pct,
+                    }
+            except Exception:
+                continue
+    except Exception as e:
+        print(f"    Warning: anchor price fetch error: {e}")
+    if prices:
+        print(f"    Anchor reference prices: got {len(prices)}/{len(wanted)} priority names")
+    return prices
+
+
 def fetch_market_close(finnhub_key: str) -> dict:
     """Fetch market close data for S&P 500, NASDAQ, and other indices."""
     close_data = {
@@ -3722,6 +3784,11 @@ def run_morning_briefing():
     premarket_movers = fetch_premarket_movers(CONFIG["FMP_API_KEY"], all_tickers, threshold=3.0)
     print(f"  Found {len(premarket_movers)} holdings moving >3%")
 
+    # Always supply current prices for anchor names (PLTR etc.) so the AI brief
+    # has a real price reference even when they are not movers — prevents the
+    # model fabricating stale levels (the 2026-06-15 "PLTR $70" hallucination).
+    anchor_prices = fetch_anchor_prices(all_tickers)
+
     print("\n[7b/10] Fetching analyst actions (yfinance)...")
     analyst_actions = fetch_analyst_actions(None, ticker_set)
     total_actions = sum(len(v) for v in analyst_actions.values())
@@ -3784,6 +3851,7 @@ def run_morning_briefing():
     briefing_data = {
         "market_snapshot": market_snapshot,
         "premarket_movers": premarket_movers,
+        "anchor_prices": anchor_prices,
         "filtered_news": filtered_news,
         "scorecard": scorecard,
         "earnings": earnings,
@@ -4000,6 +4068,11 @@ def run_premarket_update():
     premarket_movers = fetch_premarket_movers(CONFIG["FMP_API_KEY"], all_tickers, threshold=2.0)
     print(f"  Found {len(premarket_movers)} holdings moving >2%")
 
+    # Always supply current prices for anchor names (PLTR etc.) so the AI brief
+    # has a real price reference even when they are not movers — prevents the
+    # model fabricating stale levels (the 2026-06-15 "PLTR $70" hallucination).
+    anchor_prices = fetch_anchor_prices(all_tickers)
+
     print("\n[3/5] Fetching today's earnings...")
     finnhub_upcoming = fetch_finnhub_earnings(CONFIG["FINNHUB_API_KEY"], ticker_set)
     print(f"  Found {len(finnhub_upcoming)} earnings events")
@@ -4050,6 +4123,7 @@ def run_premarket_update():
     briefing_data = {
         "market_snapshot": market_snapshot,
         "premarket_movers": premarket_movers,
+        "anchor_prices": anchor_prices,
         "earnings": finnhub_upcoming,
         "scorecard": scorecard,
         "just_reported": just_reported,
