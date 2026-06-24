@@ -2,8 +2,14 @@
 
 **Purpose:** Everything needed to rebuild the Morning Briefing system from scratch on a clean Mac. If this file plus the other files in this Drive folder exist, a new Claude session (or a human) can fully reconstruct the running system.
 
-**Last Updated:** May 23, 2026 (v2.7.2 LunarCrush → Sunday evening + monitor false-positive fix — see PROJECT_STATE.md changelog)
+**Last Updated:** June 23, 2026 (v2.7.5 model-currency fix + retired-model guard — see PROJECT_STATE.md changelog)
 **Owner:** Jeff Vessler | jvs@blumecapital.com | Blume Capital
+
+## v2.7.5 Quick Reference (2026-06-23)
+
+1. **AI model ID is `claude-sonnet-4-6`** (set in `morning_briefing.py` ×3 and `morning_briefing_redesign.py` ×4). The prior pin `claude-sonnet-4-20250514` retired 2026-06-15 and 404'd every AI call, silently degrading the briefing (FILTERED NEWS showed `[???]`/`FYI` everywhere). **When a model retires, update all 7 occurrences** — `grep -rn 'model="claude' *.py`.
+2. **Retired-model guard.** `warn_if_model_retired()` / `is_model_retired_error()` in `morning_briefing.py` print a loud `!!!! MODEL RETIRED OR INVALID` banner (naming the fix) from every AI `except` block on a 404 model error. The news fallback now leads with a visible `SYSTEM`/`URGENT` "AI categorization unavailable — update the model ID" banner instead of cryptic `[???]` rows. **If you ever see that banner in a brief or log, swap the model ID per item 1.**
+3. **Model currency is a standing maintenance item** — a pinned model ID works until it retires, then fails. Check the catalog at https://platform.claude.com/docs/en/about-claude/models when refreshing.
 
 ## v2.7.4 Quick Reference (2026-05-23)
 

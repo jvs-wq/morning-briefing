@@ -10,6 +10,19 @@ from typing import Any
 from anthropic import Anthropic
 
 
+def _warn_if_model_retired(exc: Exception, where: str) -> None:
+    """Print a loud banner if exc is a retired-model 404 (delegates to morning_briefing).
+
+    Imported lazily inside the call to avoid a circular import at module load
+    (morning_briefing pulls in this module's renderers).
+    """
+    try:
+        from morning_briefing import warn_if_model_retired
+        warn_if_model_retired(exc, where)
+    except Exception:
+        pass
+
+
 # ============================================================================
 # SYSTEM PROMPT FOR AI BRIEF GENERATION
 # ============================================================================
@@ -193,6 +206,7 @@ def generate_ai_morning_brief(data: dict[str, Any], api_key: str) -> dict[str, s
             return _fallback_brief(data)
 
     except Exception as e:
+        _warn_if_model_retired(e, "morning brief")
         print(f"ERROR in AI brief generation: {e}")
         return _fallback_brief(data)
 
@@ -478,6 +492,7 @@ def generate_ai_recap_brief(data: dict[str, Any], api_key: str) -> dict[str, str
         print("ERROR: Could not parse JSON from AI recap response")
         return _fallback_recap_brief(data)
     except Exception as e:
+        _warn_if_model_retired(e, "recap brief")
         print(f"ERROR in AI recap generation: {e}")
         return _fallback_recap_brief(data)
 
@@ -2000,6 +2015,7 @@ def generate_ai_premarket_brief(data: dict[str, Any], api_key: str) -> dict[str,
         print("ERROR: Could not parse JSON from premarket AI response")
         return _fallback_premarket_brief(data)
     except Exception as e:
+        _warn_if_model_retired(e, "premarket brief")
         print(f"ERROR in premarket AI generation: {e}")
         return _fallback_premarket_brief(data)
 
@@ -2315,6 +2331,7 @@ def generate_ai_weekend_brief(data: dict[str, Any], api_key: str) -> dict[str, s
         print("ERROR: Could not parse JSON from weekend AI response")
         return _fallback_weekend_brief(data)
     except Exception as e:
+        _warn_if_model_retired(e, "weekend brief")
         print(f"ERROR in weekend AI generation: {e}")
         return _fallback_weekend_brief(data)
 

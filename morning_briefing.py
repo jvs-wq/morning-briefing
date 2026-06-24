@@ -75,7 +75,7 @@ except ImportError:
 import requests
 from datetime import datetime, timedelta
 from email.utils import parsedate_to_datetime
-from anthropic import Anthropic
+from anthropic import Anthropic, NotFoundError
 
 # === v2.6 safeguard: anti-regression guard ===
 # Refuses to run if any iMessage symbol reappears.  This blocks the
@@ -2441,6 +2441,40 @@ NEWS ITEMS:
 """
 
 
+def is_model_retired_error(exc: Exception) -> bool:
+    """True when exc looks like a retired/unknown model (HTTP 404 not_found on the model ID).
+
+    A pinned Claude model ID eventually retires and the API returns 404. This is the
+    failure that silently degraded the briefing in June 2026 (every AI call fell back),
+    so we detect it explicitly to raise a loud, actionable alarm.
+    """
+    if isinstance(exc, NotFoundError):
+        return True
+    msg = str(exc).lower()
+    return "not_found_error" in msg and "model" in msg
+
+
+def warn_if_model_retired(exc: Exception, where: str) -> bool:
+    """Print an unmissable banner if exc is a retired-model 404. Returns True if it was.
+
+    Surfaces the one fix that matters (update the model ID) directly in the run log,
+    so a retired model reads as an obvious alarm instead of a mysterious rendering bug.
+    """
+    if not is_model_retired_error(exc):
+        return False
+    bar = "!" * 72
+    print(
+        f"\n{bar}\n"
+        f"  MODEL RETIRED OR INVALID — AI FEATURES DEGRADED ({where})\n"
+        f"  {exc}\n"
+        f"  FIX: update the model ID in morning_briefing.py and\n"
+        f"       morning_briefing_redesign.py to a current model.\n"
+        f"       Catalog: https://platform.claude.com/docs/en/about-claude/models\n"
+        f"{bar}\n"
+    )
+    return True
+
+
 def filter_news_with_ai(news_items: list[dict], api_key: str) -> list[dict]:
     """Use Claude to filter and categorize news."""
     if not news_items:
@@ -2490,10 +2524,28 @@ def filter_news_with_ai(news_items: list[dict], api_key: str) -> list[dict]:
 
         return []
     except Exception as e:
+        warn_if_model_retired(e, "news filter")
         print(f"Error filtering with AI: {e}")
-        # Fallback: return all news as FYI
-        return [{"title": item["title"], "ticker": "???", "category": "FYI", "summary": item["title"]}
-                for item in news_items[:10]]
+        # Fallback: AI categorization unavailable. Surface a loud, visible banner at the
+        # top of the briefing instead of silently emitting cryptic "[???] FYI" rows.
+        retired = is_model_retired_error(e)
+        reason = (
+            "The Claude model appears to be retired — update the model ID in the code."
+            if retired else "The AI categorizer hit an error for this run."
+        )
+        banner = {
+            "title": f"⚠️ AI news categorization unavailable — headlines below are unfiltered. {reason}",
+            "ticker": "SYSTEM",
+            "category": "URGENT",
+            "summary": reason,
+            "link": "",
+        }
+        degraded = [
+            {"title": item["title"], "ticker": "—", "category": "FYI",
+             "summary": item["title"], "link": item.get("link", "")}
+            for item in news_items[:10]
+        ]
+        return [banner] + degraded
 
 
 def explain_earnings_misses(misses: list[dict], api_key: str) -> dict:
@@ -2542,6 +2594,7 @@ Based ONLY on facts clearly stated in the news headlines, in ONE brief sentence 
             explanations[symbol] = explanation
 
     except Exception as e:
+        warn_if_model_retired(e, "earnings miss explanations")
         print(f"Error generating miss explanations: {e}")
 
     return explanations
@@ -2605,6 +2658,7 @@ Based ONLY on the headlines, answer in 2-3 words max: did management RAISE guida
             # Skip 'unclear' — don't add noise
 
     except Exception as e:
+        warn_if_model_retired(e, "earnings guidance analysis")
         print(f"Error analyzing guidance: {e}")
 
     return signals
@@ -2831,7 +2885,7 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
         lines.append("▸ URGENT")
         lines.append("")
         for item in urgent:
-            ticker = item.get("ticker", "???")
+            ticker = item.get("ticker", "—")
             title = item.get("title", "")[:100]
             summary = item.get("summary", "")
             link = item.get("link", "")
@@ -2847,7 +2901,7 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
         lines.append("▸ IMPORTANT")
         lines.append("")
         for item in important:
-            ticker = item.get("ticker", "???")
+            ticker = item.get("ticker", "—")
             title = item.get("title", "")[:100]
             summary = item.get("summary", "")
             link = item.get("link", "")
@@ -2980,7 +3034,7 @@ def format_briefing(filtered_news: list[dict], earnings: list[dict], scorecard: 
         lines.append("▸ FYI")
         lines.append("")
         for item in fyi[:7]:  # Show up to 7 FYI items
-            ticker = item.get("ticker", "???")
+            ticker = item.get("ticker", "—")
             title = item.get("title", "")[:100]
             summary = item.get("summary", "")
             link = item.get("link", "")
@@ -3342,7 +3396,7 @@ def format_market_recap(market_close: dict, portfolio_perf: list[dict],
         lines.append("▸ NEWS HIGHLIGHTS")
         lines.append("")
         for item in important[:5]:
-            ticker = item.get("ticker", "???")
+            ticker = item.get("ticker", "—")
             summary = item.get("summary", item.get("title", ""))[:65]
             link = item.get("link", "")
             lines.append(f"  • [{ticker}] {summary}")

@@ -1,7 +1,15 @@
 # Morning Briefing — Project State
 
-**Last updated:** 2026-06-20
-**Status:** Production. Personal-book holdings refreshed in the Drive edit surface on 2026-06-20 (see changelog). **NOT yet deployed to prod** as of this edit — pending deploy decision (next weekday 4:50 AM auto-sync will pick it up otherwise).
+**Last updated:** 2026-06-23
+**Status:** Production. **v2.7.5 model-currency fix + retired-model guard is LIVE in both prod and Drive** (see changelog). Personal-book holdings refresh from 2026-06-20 is in the Drive edit surface; deploy status for that item unchanged.
+
+### Changelog — 2026-06-23 (v2.7.5 — model-currency fix + retired-model guard)
+- **Root cause.** The AI model was pinned to `claude-sonnet-4-20250514` (Sonnet 4) in 7 spots across `morning_briefing.py` (3) and `morning_briefing_redesign.py` (4). That model **retired on 2026-06-15**; from 6/15 onward every AI call returned HTTP 404 `not_found_error`, so all AI features silently fell back. The visible symptom was the FILTERED NEWS section rendering every item as `[???]` / `FYI` — the signature of `filter_news_with_ai`'s fallback path. The same 404 also degraded the brief narrative, miss explanations, and guidance analysis.
+- **Fix 1 — model refresh.** All 7 occurrences swapped to `claude-sonnet-4-6` (current, same tier, official drop-in replacement). Verified with a live API call (`stop_reason: end_turn`) and a live `filter_news_with_ai` test returning real tickers/categories (`PLTR` / `URGENT`). Checked: no breaking 4.6 params in use (no `temperature`/`top_p`/`budget_tokens`/prefills).
+- **Fix 2 — retired-model guard (so this never silently recurs).** Added `is_model_retired_error()` + `warn_if_model_retired()` to `morning_briefing.py`. Every AI `except` block (filter, misses, guidance, and the 4 redesign brief functions via a lazy `_warn_if_model_retired` wrapper that dodges the circular import) now prints an unmissable `!!!! MODEL RETIRED OR INVALID` banner naming the fix when it sees a 404 model error.
+- **Fix 3 — visible degradation, no more cryptic `[???]`.** The `filter_news_with_ai` fallback now prepends a `SYSTEM` / `URGENT` banner item ("⚠️ AI news categorization unavailable — …; update the model ID") so the degraded state leads the briefing instead of hiding as `[???]`. Degraded rows now carry `—` instead of `???`, and the 4 render-time `item.get("ticker", "???")` defaults were changed to `—`. Zero `"???"` literals remain in either tree.
+- **Why this matters.** A pinned model ID is a time bomb — it works until the model retires, then fails silently and looks like a rendering bug. The guard converts that failure mode into a loud, self-documenting alarm in the run log and the briefing itself. **The next time a model retires, the fix is named on screen.** Forward note: `claude-sonnet-4-6` will itself retire eventually; the guard will say so.
+- **Validated.** Both modules `py_compile` clean (prod + Drive); simulated-404 test confirms the banner fires and the fallback returns the visible `SYSTEM` tag with no `[???]`; non-model errors correctly do *not* raise a false "retired" claim; redesign lazy wrapper imports without circular-import error. Drive == prod for both `.py` files.
 
 ### Changelog — 2026-06-20 (personal-book refresh)
 - **Personal side re-ingested** from `SummPosn_Grp_JVS_Portfolio_062026.csv` (full personal book, as-of 06/19 close, 61 equities + 6 ETFs; mutual funds DODFX/SGOIX and options excluded per scope; no zero-qty rows).

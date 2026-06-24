@@ -9,6 +9,11 @@ Automated stock-market intelligence brief for a concentrated investment portfoli
 - **New universe recipe (2026-06-04, per Jeff):** full personal book (JVS group account) ∪ firm MASTER account top-30 equity positions by market value. Firm ETFs and sub-top-30 firm names intentionally out of scope.
 - **2026-06-06 refresh:** +TMUS (new personal position); −FDXF, −VBIL (zero-quantity rows now excluded). Net 70 stocks + 6 ETFs = 76 total. Details in `PROJECT_STATE.md`.
 
+## v2.7.5 — Model-Currency Fix + Retired-Model Guard (2026-06-23)
+
+- **Fixed the `[???]` briefing.** The AI model was pinned to `claude-sonnet-4-20250514` (Sonnet 4), which **retired 2026-06-15**. From then on every AI call 404'd and silently fell back — the FILTERED NEWS section showed `[???]` / `FYI` on every item, and the brief narrative, miss explanations, and guidance analysis all degraded. Swapped all 7 occurrences to `claude-sonnet-4-6` (current drop-in). Verified live.
+- **Added a retired-model guard so it can't silently recur.** Every AI failure path now prints a loud `!!!! MODEL RETIRED OR INVALID` banner naming the fix, and the news fallback leads with a visible `SYSTEM` / `URGENT` "AI categorization unavailable — update the model ID" banner instead of cryptic `[???]` rows. **Model currency is now a named maintenance item** — when the banner appears, update the model ID (`grep -rn 'model="claude' *.py`) from https://platform.claude.com/docs/en/about-claude/models.
+
 ## v2.7.3 / v2.7.4 — Dead-Code Cleanup, Premarket Fix, Plist Consolidation (2026-05-23)
 
 - **Premarket import bug fixed (v2.7.3)** — `format_premarket_text` was called but never imported; every weekday premarket had been silently NameError-ing into the legacy text-only fallback. Now delivers the AI-editorial HTML brief as intended.
