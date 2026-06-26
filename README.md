@@ -9,6 +9,15 @@ Automated stock-market intelligence brief for a concentrated investment portfoli
 - **New universe recipe (2026-06-04, per Jeff):** full personal book (JVS group account) ∪ firm MASTER account top-30 equity positions by market value. Firm ETFs and sub-top-30 firm names intentionally out of scope.
 - **2026-06-06 refresh:** +TMUS (new personal position); −FDXF, −VBIL (zero-quantity rows now excluded). Net 70 stocks + 6 ETFs = 76 total. Details in `PROJECT_STATE.md`.
 
+## v2.8 — Readability, Charter Typeface, Ticker-Box Restyle + Two Audits (2026-06-26)
+
+- **Hybrid bullets in all 4 briefs.** Lead sections open with a one-line `<strong>` takeaway, then 2–4 bullets; list-shaped sections (movers, earnings, news, watchlist) render one bullet per item; short macro/context paragraphs stay prose. Driven by an `OUTPUT FORMATTING` block in each system prompt, rendered via `_style_bullets()` (Outlook-safe inline styling) with `_html_to_text()` flattening bullets to `•` lines for the text-email fallback.
+- **Charter typeface.** `font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif` (unquoted — Apple-native, no webfont embed; non-Apple clients fall back through the serif chain). IBM Plex Mono was trialed first (mono/telegraph identity) and reverted for readability.
+- **Ticker-box restyle.** Market Snapshot + Pre-Market Movers table header rows are now black with white text and a red top accent, matching the masthead; appendix tables stay tan (deliberate hierarchy).
+- **Audit — news freshness (OPEN).** All briefs depend on one deprecated source (Yahoo Finance RSS headline feed; live probe empty) with no recency filter and no empty-source alarm. Recommended: migrate to Finnhub company-news + date window + warning banner. Not yet implemented.
+- **Audit — API efficiency (OPEN).** Per-symbol full-book Finnhub `/quote` verification with `time.sleep(1.1)` (~80s + ~74 calls/run) is the main drag; recommended to scope the cross-check to displayed names. Earnings-source cascade is already efficient. Not yet implemented.
+- **Status:** in the Drive edit surface, not yet deployed. `py_compile` clean. Sample renders in `outputs/` (`…_charter_…`, and the trialed `…_plexmono_…`).
+
 ## v2.7.5 — Model-Currency Fix + Retired-Model Guard (2026-06-23)
 
 - **Fixed the `[???]` briefing.** The AI model was pinned to `claude-sonnet-4-20250514` (Sonnet 4), which **retired 2026-06-15**. From then on every AI call 404'd and silently fell back — the FILTERED NEWS section showed `[???]` / `FYI` on every item, and the brief narrative, miss explanations, and guidance analysis all degraded. Swapped all 7 occurrences to `claude-sonnet-4-6` (current drop-in). Verified live.
@@ -170,7 +179,7 @@ The sibling [`lunarcrush-brief`](https://github.com/jvs-wq/lunarcrush-brief) rep
 | Anthropic Claude | API key | AI brief, news filter, earnings miss/guidance analysis |
 | yfinance | None | Pre/post market prices, earnings fallback, analyst actions |
 | Yahoo Finance spark/chart | None | Batch prices, futures, treasury yield |
-| Yahoo Finance RSS | None | News headlines |
+| Yahoo Finance RSS | None | News headlines — **⚠ fragile/deprecated; flagged in the 2026-06-26 v2.8 audit.** Undocumented endpoint, live probe empty, no recency filter, no empty-source alarm. Migration to Finnhub company-news is the recommended fix (see PROJECT_STATE v2.8). |
 | Finnhub | API key | Earnings calendar + scorecard (with revenue), market snapshot |
 | Alpha Vantage | API key | RSI alerts, last-resort earnings |
 | FMP | API key | Pre-market movers fallback, portfolio performance |
