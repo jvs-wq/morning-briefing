@@ -1102,16 +1102,16 @@ def _format_scorecard_table(scorecard: list[dict[str, Any]]) -> str:
 """
 
     return f"""
-<table width="100%" cellpadding="10" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;">
-    <td style="font-weight: 700; color: #1a1a1a;">Ticker</td>
-    <td style="font-weight: 700; color: #1a1a1a;">Date</td>
-    <td style="font-weight: 700; color: #1a1a1a; text-align: center;">Result</td>
-    <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Actual EPS</td>
-    <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Est. EPS</td>
-    <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Surprise</td>
-    <td style="font-weight: 700; color: #1a1a1a; text-align: right;">Revenue</td>
-    <td style="font-weight: 700; color: #1a1a1a; text-align: center;">Guidance</td>
+<table width="100%" cellpadding="10" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; margin-bottom: 32px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
+<tr style="background-color: #1a1a1a; color: #ffffff;">
+    <td style="font-weight: 700; color: #ffffff;">Ticker</td>
+    <td style="font-weight: 700; color: #ffffff;">Date</td>
+    <td style="font-weight: 700; color: #ffffff; text-align: center;">Result</td>
+    <td style="font-weight: 700; color: #ffffff; text-align: right;">Actual EPS</td>
+    <td style="font-weight: 700; color: #ffffff; text-align: right;">Est. EPS</td>
+    <td style="font-weight: 700; color: #ffffff; text-align: right;">Surprise</td>
+    <td style="font-weight: 700; color: #ffffff; text-align: right;">Revenue</td>
+    <td style="font-weight: 700; color: #ffffff; text-align: center;">Guidance</td>
 </tr>
 {rows}
 </table>
@@ -1124,8 +1124,8 @@ def _format_full_earnings_table(scorecard: list[dict[str, Any]], earnings: list[
 
     if scorecard:
         html += '<h4 style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 11px; font-weight: 700; color: #1a1a1a; margin: 24px 0 12px 0; text-transform: uppercase;">Recent Earnings (4-Week Lookback)</h4>'
-        html += '<table width="100%" cellpadding="8" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">'
-        html += '<tr style="background-color: #ebe7e1;"><td style="font-weight: 700;">Ticker</td><td>Date</td><td>Result</td><td>EPS Act./Est.</td><td>Revenue</td><td>Guidance</td></tr>'
+        html += '<table width="100%" cellpadding="8" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">'
+        html += '<tr style="background-color: #1a1a1a; color: #ffffff;"><td style="font-weight: 700;">Ticker</td><td>Date</td><td>Result</td><td>EPS Act./Est.</td><td>Revenue</td><td>Guidance</td></tr>'
 
         for item in scorecard[:15]:
             symbol = item.get("symbol", "N/A")
@@ -1146,8 +1146,8 @@ def _format_full_earnings_table(scorecard: list[dict[str, Any]], earnings: list[
 
     if earnings:
         html += '<h4 style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 11px; font-weight: 700; color: #1a1a1a; margin: 24px 0 12px 0; text-transform: uppercase;">Upcoming Earnings Calendar</h4>'
-        html += '<table width="100%" cellpadding="8" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">'
-        html += '<tr style="background-color: #ebe7e1;"><td style="font-weight: 700;">Ticker</td><td>Date</td><td>Hour</td><td>Est. EPS</td><td>Est. Revenue</td></tr>'
+        html += '<table width="100%" cellpadding="8" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">'
+        html += '<tr style="background-color: #1a1a1a; color: #ffffff;"><td style="font-weight: 700;">Ticker</td><td>Date</td><td>Hour</td><td>Est. EPS</td><td>Est. Revenue</td></tr>'
 
         for item in earnings[:10]:
             symbol = item.get("symbol", "N/A")
@@ -1193,8 +1193,8 @@ def _format_analyst_actions_table(analyst_actions: dict) -> str:
 
     return f"""
 <h4 style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 11px; font-weight: 700; color: #1a1a1a; margin: 24px 0 12px 0; text-transform: uppercase;">Analyst Actions (7 Days)</h4>
-<table width="100%" cellpadding="8" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">
-<tr style="background-color: #ebe7e1;"><td style="font-weight: 700;">Ticker</td><td>Analyst</td><td>Rating</td><td style="text-align: right;">Price Target</td><td>Date</td></tr>
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">
+<tr style="background-color: #1a1a1a; color: #ffffff;"><td style="font-weight: 700;">Ticker</td><td>Analyst</td><td>Rating</td><td style="text-align: right;">Price Target</td><td>Date</td></tr>
 {rows}
 </table>
 """
@@ -1331,8 +1331,8 @@ def format_market_recap_html(data, ai_brief=None):
 
     close_table = ""
     if close_rows:
-        close_table = f'''<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Index</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Level</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Change</td></tr>
+        close_table = f'''<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; margin-bottom: 32px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
+<tr style="background-color: #1a1a1a; color: #ffffff;"><td style="padding: 10px; font-weight: 700; color: #ffffff;">Index</td><td style="padding: 10px; font-weight: 700; color: #ffffff; text-align: right;">Level</td><td style="padding: 10px; font-weight: 700; color: #ffffff; text-align: right;">Change</td></tr>
 {close_rows}</table>'''
 
     section_2 = ""
@@ -1369,8 +1369,8 @@ def format_market_recap_html(data, ai_brief=None):
                 drift_tag = ' <span style="color:#999; font-size: 10px;" title="Single-source (Finnhub not available for this ticker)">&middot;</span>'
             body += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px; font-weight: 700;">{symbol}{drift_tag}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">${price:,.2f}</td><td style="padding: 10px; text-align: right; color: {color}; font-weight: 600;">{sign}{chg:.2f}%</td></tr>'
         return f'''<h3 style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px; font-weight: 700; color: #1a1a1a; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">{title}</h3>
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Price</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Change</td></tr>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; margin-bottom: 24px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
+<tr style="background-color: #1a1a1a; color: #ffffff;"><td style="padding: 10px; font-weight: 700; color: #ffffff;">Ticker</td><td style="padding: 10px; font-weight: 700; color: #ffffff; text-align: right;">Price</td><td style="padding: 10px; font-weight: 700; color: #ffffff; text-align: right;">Change</td></tr>
 {body}</table>'''
 
     summary_block = ""
@@ -1380,7 +1380,7 @@ def format_market_recap_html(data, ai_brief=None):
         down_count = len([p for p in portfolio_perf if (p.get("change_pct") or 0) < 0])
         avg_sign = "+" if avg_change >= 0 else ""
         avg_color = "#27ae60" if avg_change >= 0 else "#c0392b"
-        summary_block = f'''<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 32px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
+        summary_block = f'''<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; margin-bottom: 32px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
 <tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px;">Average move</td><td style="padding: 10px; text-align: right; color: {avg_color}; font-weight: 600;">{avg_sign}{avg_change:.2f}%</td></tr>
 <tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px;">Advancers</td><td style="padding: 10px; text-align: right; font-weight: 600;">{up_count}</td></tr>
 <tr><td style="padding: 10px;">Decliners</td><td style="padding: 10px; text-align: right; font-weight: 600;">{down_count}</td></tr>
@@ -1432,8 +1432,8 @@ def format_market_recap_html(data, ai_brief=None):
             rev_str = f"{rev_a} / {rev_e}" if rev_a and rev_e else "—"
             rows += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px; font-weight: 700;">{sym}</td><td style="padding: 10px; text-align: center; color: {status_color}; font-weight: 600;">{status_txt}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{eps_str}</td><td style="padding: 10px; text-align: right;">{surp_html}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rev_str}</td></tr>'
         ah_reported_block = f'''<h3 style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px; font-weight: 700; color: #1a1a1a; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">Reported After Close</h3>
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: center;">Result</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">EPS Act/Est</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Surprise</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Revenue Act/Est</td></tr>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; margin-bottom: 24px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
+<tr style="background-color: #1a1a1a; color: #ffffff;"><td style="padding: 10px; font-weight: 700; color: #ffffff;">Ticker</td><td style="padding: 10px; font-weight: 700; color: #ffffff; text-align: center;">Result</td><td style="padding: 10px; font-weight: 700; color: #ffffff; text-align: right;">EPS Act/Est</td><td style="padding: 10px; font-weight: 700; color: #ffffff; text-align: right;">Surprise</td><td style="padding: 10px; font-weight: 700; color: #ffffff; text-align: right;">Revenue Act/Est</td></tr>
 {rows}</table>'''
 
     ah_pending_block = ""
@@ -1446,8 +1446,8 @@ def format_market_recap_html(data, ai_brief=None):
             rev_e = _rev_fmt(e.get("rev_estimate")) or "—"
             rows += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px; font-weight: 700;">{sym}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{est_str}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rev_e}</td></tr>'
         ah_pending_block = f'''<h3 style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px; font-weight: 700; color: #999; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">Pending (Scheduled AMC, Not Yet Reported)</h3>
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
-<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700; color: #1a1a1a;">Ticker</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Est. EPS</td><td style="padding: 10px; font-weight: 700; color: #1a1a1a; text-align: right;">Est. Revenue</td></tr>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; margin-bottom: 24px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px;">
+<tr style="background-color: #1a1a1a; color: #ffffff;"><td style="padding: 10px; font-weight: 700; color: #ffffff;">Ticker</td><td style="padding: 10px; font-weight: 700; color: #ffffff; text-align: right;">Est. EPS</td><td style="padding: 10px; font-weight: 700; color: #ffffff; text-align: right;">Est. Revenue</td></tr>
 {rows}</table>'''
 
     section_4 = ""
@@ -1542,8 +1542,8 @@ def format_market_recap_html(data, ai_brief=None):
             ext_str = f"${extreme:,.2f}" if extreme else "—"
             body += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px; font-weight: 700;">{marker} {symbol}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">${price:,.2f}</td><td style="padding: 10px; text-align: right; color: #999; font-variant-numeric: tabular-nums;">{ext_str}</td></tr>'
         return f'''<h4 style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 11px; font-weight: 700; color: {color}; margin: 16px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">{label}</h4>
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">
-<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700;">Ticker</td><td style="padding: 10px; font-weight: 700; text-align: right;">Price</td><td style="padding: 10px; font-weight: 700; text-align: right;">52-Week Level</td></tr>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; margin-bottom: 24px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">
+<tr style="background-color: #1a1a1a; color: #ffffff;"><td style="padding: 10px; font-weight: 700;">Ticker</td><td style="padding: 10px; font-weight: 700; text-align: right;">Price</td><td style="padding: 10px; font-weight: 700; text-align: right;">52-Week Level</td></tr>
 {body}</table>'''
 
     appendix_52w = ""
@@ -1565,8 +1565,8 @@ def format_market_recap_html(data, ai_brief=None):
             flag_str = " &middot; ".join(flags)
             rsi_rows += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="padding: 10px; font-weight: 700;">{sym}</td><td style="padding: 10px; text-align: right; font-variant-numeric: tabular-nums;">{rsi_val:.1f}</td><td style="padding: 10px; text-align: right; color: #999; font-variant-numeric: tabular-nums;">{min_rsi:.1f}</td><td style="padding: 10px; color: #c0392b; font-size: 12px;">{flag_str}</td></tr>'
         appendix_rsi = f'''<h3 style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px; font-weight: 700; color: #666; margin: 24px 0 12px 0; text-transform: uppercase; letter-spacing: 1px;">RSI WATCH</h3>
-<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; margin-bottom: 24px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">
-<tr style="background-color: #ebe7e1;"><td style="padding: 10px; font-weight: 700;">Ticker</td><td style="padding: 10px; font-weight: 700; text-align: right;">RSI</td><td style="padding: 10px; font-weight: 700; text-align: right;">52w Min</td><td style="padding: 10px; font-weight: 700;">Flag</td></tr>
+<table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; margin-bottom: 24px; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">
+<tr style="background-color: #1a1a1a; color: #ffffff;"><td style="padding: 10px; font-weight: 700;">Ticker</td><td style="padding: 10px; font-weight: 700; text-align: right;">RSI</td><td style="padding: 10px; font-weight: 700; text-align: right;">52w Min</td><td style="padding: 10px; font-weight: 700;">Flag</td></tr>
 {rsi_rows}</table>'''
 
     # ---- Data Quality footer ------------------------------------------------
@@ -2167,8 +2167,8 @@ def format_premarket_html(ai_brief: dict[str, str], data: dict[str, Any]) -> str
 <h2 style="font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:32px 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
 Still to Report Today
 </h2>
-<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
-<tr style="background-color:#ebe7e1;"><td style="font-weight:700;">Ticker</td><td>Timing</td><td style="text-align:right;">Est. EPS</td><td style="text-align:right;">Est. Rev</td></tr>
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;border-top:3px solid #c0392b;margin-bottom:24px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
+<tr style="background-color:#1a1a1a;color:#ffffff;"><td style="font-weight:700;">Ticker</td><td>Timing</td><td style="text-align:right;">Est. EPS</td><td style="text-align:right;">Est. Rev</td></tr>
 {earnings_rows}
 </table>
 """
@@ -2210,8 +2210,8 @@ Still to Report Today
 <h2 style="font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:32px 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
 Just Printed (BMO)
 </h2>
-<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
-<tr style="background-color:#ebe7e1;"><td style="font-weight:700;">Ticker</td><td>EPS</td><td style="text-align:right;">EPS Actual vs Est.</td><td style="text-align:right;">Revenue Actual vs Est.</td></tr>
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;border-top:3px solid #c0392b;margin-bottom:24px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
+<tr style="background-color:#1a1a1a;color:#ffffff;"><td style="font-weight:700;">Ticker</td><td>EPS</td><td style="text-align:right;">EPS Actual vs Est.</td><td style="text-align:right;">Revenue Actual vs Est.</td></tr>
 {jr_rows}
 </table>
 """
@@ -2236,7 +2236,7 @@ Open Signal
 </div>
 
 <!-- FUTURES -->
-<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;border-top:3px solid #c0392b;margin-bottom:24px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
 {futures_rows}
 </table>
 
@@ -2248,8 +2248,8 @@ Pre-Market Movers
 {ai_brief.get('movers_update', 'No significant movers.')}
 </div>
 
-<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:32px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
-<tr style="background-color:#ebe7e1;"><td style="font-weight:700;">Ticker</td><td style="text-align:right;">Price</td><td style="text-align:right;">Change</td></tr>
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;border-top:3px solid #c0392b;margin-bottom:32px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
+<tr style="background-color:#1a1a1a;color:#ffffff;"><td style="font-weight:700;">Ticker</td><td style="text-align:right;">Price</td><td style="text-align:right;">Change</td></tr>
 {movers_rows}
 </table>
 
@@ -2476,7 +2476,7 @@ def format_weekend_html(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
 <h2 style="font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:32px 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
 Weekend Headlines
 </h2>
-<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;border-top:3px solid #c0392b;margin-bottom:24px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
 {news_rows}
 </table>
 """
@@ -2530,7 +2530,7 @@ Weekend Takeaway
 <h2 style="font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:14px;font-weight:700;color:#1a1a1a;margin:0 0 12px 0;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #c0392b;padding-bottom:8px;">
 Sunday Futures
 </h2>
-<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;margin-bottom:24px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
+<table width="100%" cellpadding="8" cellspacing="0" style="background-color:#f9f7f5;border:1px solid #e8e3de;border-top:3px solid #c0392b;margin-bottom:24px;font-family:Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif;font-size:13px;">
 {futures_rows or '<tr><td>Futures data unavailable.</td></tr>'}
 </table>
 
