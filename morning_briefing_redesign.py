@@ -895,7 +895,7 @@ def format_morning_html(ai_brief: dict[str, str], data: dict[str, Any]) -> str:
 APPENDIX: DETAILED DATA
 </h3>
 
-{_format_full_earnings_table(scorecard, earnings) if scorecard or earnings else '<p style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px; color: #999;">No earnings data available</p>'}
+{_format_full_earnings_table(scorecard, earnings)}
 
 {_format_analyst_actions_table(data.get("analyst_actions", {}))}
 
@@ -1144,8 +1144,10 @@ def _format_full_earnings_table(scorecard: list[dict[str, Any]], earnings: list[
 
         html += '</table>'
 
+    # Upcoming Earnings Calendar — always rendered (next 7-day horizon), even
+    # when the calendar is empty, so the section never silently disappears.
+    html += '<h4 style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 11px; font-weight: 700; color: #1a1a1a; margin: 24px 0 12px 0; text-transform: uppercase;">Upcoming Earnings Calendar (Next 7 Days)</h4>'
     if earnings:
-        html += '<h4 style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 11px; font-weight: 700; color: #1a1a1a; margin: 24px 0 12px 0; text-transform: uppercase;">Upcoming Earnings Calendar</h4>'
         html += '<table width="100%" cellpadding="8" cellspacing="0" style="background-color: #f9f7f5; border: 1px solid #e8e3de; border-top: 3px solid #c0392b; font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 12px;">'
         html += '<tr style="background-color: #1a1a1a; color: #ffffff;"><td style="font-weight: 700;">Ticker</td><td>Date</td><td>Hour</td><td>Est. EPS</td><td>Est. Revenue</td></tr>'
 
@@ -1160,6 +1162,8 @@ def _format_full_earnings_table(scorecard: list[dict[str, Any]], earnings: list[
             html += f'<tr style="border-bottom: 1px solid #e8e3de;"><td style="font-weight: 700;">{symbol}</td><td>{date}</td><td>{hour}</td><td>{eps_est}</td><td>{rev_str}</td></tr>'
 
         html += '</table>'
+    else:
+        html += '<p style="font-family: Charter, Charter BT, Iowan Old Style, Palatino Linotype, Georgia, serif; font-size: 13px; color: #999; margin: 0 0 12px 0;">No portfolio holdings report in the next 7 days.</p>'
 
     return html
 

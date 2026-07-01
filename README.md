@@ -9,6 +9,10 @@ Automated stock-market intelligence brief for a concentrated investment portfoli
 - **New universe recipe (2026-06-04, per Jeff):** full personal book (JVS group account) ∪ firm MASTER account top-30 equity positions by market value. Firm ETFs and sub-top-30 firm names intentionally out of scope.
 - **2026-06-06 refresh:** +TMUS (new personal position); −FDXF, −VBIL (zero-quantity rows now excluded). Net 70 stocks + 6 ETFs = 76 total. Details in `PROJECT_STATE.md`.
 
+## v2.8.1 — Upcoming Earnings Section Always Visible (2026-07-01)
+
+- **Upcoming earnings never disappears now.** The morning HTML brief already pulled a 7-day upcoming-earnings calendar (Finnhub, `fetch_finnhub_earnings`), but the structured "Upcoming Earnings Calendar" appendix block was gated `if earnings:` and the appendix itself only rendered `if scorecard or earnings` — so a quiet, off-season week dropped the section entirely. It now **always renders** as **"Upcoming Earnings Calendar (Next 7 Days)"**, showing *"No portfolio holdings report in the next 7 days."* when the calendar is empty. Change is in `morning_briefing_redesign.py:_format_full_earnings_table` and its call site in `format_morning_html`. No horizon change, no new API calls.
+
 ## v2.8 — Readability, Charter Typeface, Ticker-Box Restyle + Two Audits (2026-06-26)
 
 - **Hybrid bullets in all 4 briefs.** Lead sections open with a one-line `<strong>` takeaway, then 2–4 bullets; list-shaped sections (movers, earnings, news, watchlist) render one bullet per item; short macro/context paragraphs stay prose. Driven by an `OUTPUT FORMATTING` block in each system prompt, rendered via `_style_bullets()` (Outlook-safe inline styling) with `_html_to_text()` flattening bullets to `•` lines for the text-email fallback.
