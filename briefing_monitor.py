@@ -34,9 +34,10 @@ MONITOR_LOG = "/tmp/briefing-monitor.log"
 
 # Per-workflow log path overrides (when log filename doesn't match briefing-{mode}.log).
 # Default path is LOG_DIR/briefing-{mode}.log / briefing-{mode}.err.
-WORKFLOW_LOG_PATHS = {
-    "lunarcrush": ("/tmp/lunarcrush-evening-launchd.log", "/tmp/lunarcrush-evening-launchd.log"),
-}
+# No overrides currently: com.briefing.lunarcrush writes to the standard
+# /tmp/briefing-lunarcrush.log|.err (the old /tmp/lunarcrush-evening-launchd.log
+# override pointed at the retired sibling job and was removed 2026-07-01).
+WORKFLOW_LOG_PATHS = {}
 
 # Per-workflow maximum log age (hours). Monitor runs at 5:10 AM + 6:30 AM on weekdays;
 # only morning is expected to have a fresh log at 5:10 AM. Everything else is checked
@@ -45,7 +46,7 @@ WORKFLOW_MAX_AGE_HOURS = {
     "morning":    3,    # 5:00 AM PT daily
     "premarket":  26,   # 6:20 AM PT daily — monitor runs BEFORE it at 5:10
     "recap":      26,   # 2:00 PM PT daily — monitor runs long after it
-    "lunarcrush": 26,   # 5:00 PM PT daily evening brief
+    "lunarcrush": 26,   # 5:30 PM PT Sunday social brief (checked only on the Sunday-evening monitor run)
 }
 
 # Stderr patterns that are known-expected noise and should NOT trigger a warning.

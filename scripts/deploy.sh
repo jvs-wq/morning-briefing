@@ -150,7 +150,7 @@ fi
 # 6. Optional launchd reload
 if [ "$DO_RELOAD" -eq 1 ]; then
     log "Reloading LaunchAgents..."
-    for j in morning premarket recap weekend_preview monitor; do
+    for j in morning premarket recap lunarcrush weekend_preview monitor; do
         plist="$HOME/Library/LaunchAgents/com.briefing.$j.plist"
         [ -f "$plist" ] || continue
         if [ "$DRY_RUN" -eq 1 ]; then

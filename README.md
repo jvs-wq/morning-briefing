@@ -99,7 +99,6 @@ morning_briefing.py          — Main script: data collection + all four modes
 morning_briefing_redesign.py — AI briefs, HTML email, plain-text fallback for all four modes
 briefing_monitor.py          — Health monitoring, alerting, deploy-drift detection
 launchd/                     — Launchd plists + idempotent install.sh (source of truth for the schedule)
-scripts/verify_schedule.sh   — Schedule health smoke-test (also runs as a one-shot check)
 scripts/deploy.sh            — Drive→prod→GitHub deploy script (used by com.briefing.deploy LaunchAgent)
 migrations/                  — Version migration scripts (v2_6_imessage_removal_and_safeguards.py et al.)
 requirements.txt             — Python dependencies
@@ -154,7 +153,7 @@ Schedule details:
 - `weekend_preview` uses a single dict with `Weekday=0` (Sunday) at 6:00 PM PT.
 - `monitor` runs at 5:10 AM / 6:30 AM / 1:25 PM Mon–Fri PLUS 6:00 PM Sunday. Calls `briefing_monitor.py --by-time` which dispatches to the workflow that just ran. Also includes a deploy-drift check (email alert if production SHAs diverge from Drive).
 
-**Structural gap:** only three of seven plists are currently mirrored to Drive (`com.briefing.deploy.plist`, `com.briefing.monitor.plist`, `com.briefing.lunarcrush.plist`). The morning/premarket/recap/weekend_preview plists live only in production `~/Library/LaunchAgents/` and aren't reachable to `deploy.sh`. If you ever need to change their schedule, you must edit them in place on the iMac.
+**Plist management:** all seven plists live in `launchd/` (git-tracked, the single source of truth). Install or refresh them with `bash launchd/install.sh`, which copies every plist → `~/Library/LaunchAgents/` and reloads it. Note that `scripts/deploy.sh` does **not** mirror or install plists — it syncs only the Python files and docs (`README.md`, `PROJECT_STATE.md`, `SETUP.md`). Its `--reload` step re-registers the six non-deploy agents from `~/Library/LaunchAgents/` but does not copy new plists there, so after editing a schedule in `launchd/` you must re-run `launchd/install.sh`.
 
 ## Disaster Recovery
 

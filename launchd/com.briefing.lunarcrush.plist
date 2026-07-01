@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.briefing.lunarcrush</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/usr/bin/osascript</string>
+		<string>-e</string>
+		<string>do shell script "/usr/bin/python3 /Users/jeffreystclaire/Claude/morning-briefing/morning_briefing.py lunarcrush &gt; /tmp/briefing-lunarcrush.log 2&gt; /tmp/briefing-lunarcrush.err"</string>
+	</array>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>StandardErrorPath</key>
+	<string>/tmp/briefing-lunarcrush-osa.err</string>
+	<key>StandardOutPath</key>
+	<string>/tmp/briefing-lunarcrush-osa.log</string>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Weekday</key>
+		<integer>0</integer>
+		<key>Hour</key>
+		<integer>17</integer>
+		<key>Minute</key>
+		<integer>30</integer>
+	</dict>
+</dict>
+</plist>

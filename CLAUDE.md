@@ -1,13 +1,13 @@
 # Morning Briefing — Read This First
 
-**What this is.** Email-only AI editorial market brief, runs on Jeff's iMac via launchd. Six LaunchAgents fire weekday mornings (4:50 deploy / 5:00 morning / 6:20 premarket), midday (1:15 recap), evening on Sundays (6:00 weekend_preview), plus a monitor watchdog. v2.6 hardened against deploy-drift on 2026-05-19; no iMessage path anywhere.
+**What this is.** Email-only AI editorial market brief, runs on Jeff's iMac via launchd. Seven LaunchAgents fire weekday mornings (4:50 deploy / 5:00 morning / 6:20 premarket), midday (1:15 recap), Sunday evenings (5:30 lunarcrush social brief / 6:00 weekend_preview), plus a monitor watchdog. v2.6 hardened against deploy-drift on 2026-05-19; no iMessage path anywhere.
 
 **Canonical files.**
 - `morning_briefing.py` — main script. Hosts `_v2_6_guard()` (import-time anti-regression), `days_since` enrichment, and the v2.7.5 retired-model guard (`warn_if_model_retired` / `is_model_retired_error`). **AI model ID = `claude-sonnet-4-6`** (×3 here, ×4 in redesign); update all 7 when it retires.
 - `morning_briefing_redesign.py` — AI editorial briefs + HTML email + plain-text email fallback. `BRIEFING_SYSTEM_PROMPT` carries the v2.6 freshness rule.
 - `briefing_monitor.py` — log health monitor with `check_deploy_freshness()` drift alarm.
 - `scripts/deploy.sh` — the only correct way to push code Drive → production.
-- `launchd/*.plist` — six agents. Source of truth for the schedule.
+- `launchd/*.plist` — seven agents. Source of truth for the schedule. Install/refresh via `launchd/install.sh` (copies every plist → `~/Library/LaunchAgents/` and loads it). Note: `deploy.sh` does NOT auto-mirror plists — it syncs code + docs only.
 - `PROJECT_STATE.md` — current state, changelog, deferred items.
 - `README.md` — quick operations reference.
 - `SETUP.md` — cold-rebuild guide for a new Mac.
@@ -17,7 +17,7 @@
 - Drive edit surface: `~/My Drive/Claude-Workspace/Claude Projects/Morning Briefing/` — local-only, NOT Google Drive sync.
 - Real Drive sync (stale): `~/Library/CloudStorage/GoogleDrive-jeffstclaire@gmail.com/My Drive/.../Morning Briefing/` — flagged for separate follow-up.
 
-**Deploy mechanic.** Edit in Drive. `com.briefing.deploy` LaunchAgent at 4:50 AM Mon–Fri runs `scripts/deploy.sh --reload`: SHA-diffs Drive vs production → `py_compile` validation → copies if drift → runs the v2.6 guard → `git add -A`, commit, `git push origin main` → unloads + loads all six LaunchAgents. For emergency same-day deploys, run `~/Claude/morning-briefing/scripts/deploy.sh --reload` from Terminal.
+**Deploy mechanic.** Edit in Drive. `com.briefing.deploy` LaunchAgent at 4:50 AM Mon–Fri runs `scripts/deploy.sh --reload`: SHA-diffs Drive vs production (Python + docs only) → `py_compile` validation → copies if drift → runs the v2.6 guard → `git add -A`, commit, `git push origin main` → with `--reload`, unloads + loads the six non-deploy LaunchAgents (`morning premarket recap lunarcrush weekend_preview monitor`; the deploy agent excludes itself to avoid killing its own scheduler). `deploy.sh` does NOT install/update plists — schedule changes go through `launchd/install.sh`. For emergency same-day deploys, run `~/Claude/morning-briefing/scripts/deploy.sh --reload` from Terminal.
 
 **Smoke test before claiming 'work is done'.**
 ```
